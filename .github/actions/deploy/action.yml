@@ -1,5 +1,5 @@
 name: deploy
-description: Copy binary and config to host over SSH password auth, then restart application.
+description: Copy binary and config to host over SSH key auth, then restart application.
 
 inputs:
   host:
@@ -12,8 +12,8 @@ inputs:
   user:
     description: SSH user.
     required: true
-  password:
-    description: SSH password.
+  private-key:
+    description: SSH private key.
     required: true
   remote-dir:
     description: Application directory on remote host.
@@ -37,11 +37,20 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install sshpass
+    - name: Install deploy tools
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y sshpass rsync
+        sudo apt-get install -y openssh-client rsync
+
+    - name: Prepare SSH key
+      shell: bash
+      env:
+        SSH_PRIVATE_KEY: ${{ inputs.private-key }}
+      run: |
+        key_path="$RUNNER_TEMP/payment-service-deploy-key"
+        printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_path"
+        chmod 600 "$key_path"
 
     - name: Prepare deploy files
       shell: bash
@@ -60,7 +69,6 @@ runs:
     - name: Copy binary config and migrations
       shell: bash
       env:
-        SSHPASS: ${{ inputs.password }}
         SSH_HOST: ${{ inputs.host }}
         SSH_PORT: ${{ inputs.port }}
         SSH_USER: ${{ inputs.user }}
@@ -69,8 +77,9 @@ runs:
         BINARY_NAME: ${{ inputs.binary-name }}
         CONFIG_PATH: ${{ inputs.config-path }}
       run: |
-        ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
-        rsync_rsh="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        key_path="$RUNNER_TEMP/payment-service-deploy-key"
+        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        rsync_rsh="ssh -i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
         remote="$SSH_USER@$SSH_HOST"
 
         # Проверить, что бинарный файл существует
@@ -91,26 +100,27 @@ runs:
         fi
         chmod +x "$BINARY_PATH" "$(dirname "$BINARY_PATH")/configdsn" "$(dirname "$BINARY_PATH")/goose"
 
-        sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
-        sshpass -e rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
-        sshpass -e rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/configdsn" "$remote:$REMOTE_DIR/migrate/configdsn"
-        sshpass -e rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/goose" "$remote:$REMOTE_DIR/migrate/goose"
-        sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
-        sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
+        ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
+        rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
+        rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/configdsn" "$remote:$REMOTE_DIR/migrate/configdsn"
+        rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/goose" "$remote:$REMOTE_DIR/migrate/goose"
+        rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
+        rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
+        ssh $ssh_opts "$remote" "chmod 660 '$CONFIG_PATH'"
 
     - name: Run migrations
       shell: bash
       env:
-        SSHPASS: ${{ inputs.password }}
         SSH_HOST: ${{ inputs.host }}
         SSH_PORT: ${{ inputs.port }}
         SSH_USER: ${{ inputs.user }}
         REMOTE_DIR: ${{ inputs.remote-dir }}
         CONFIG_PATH: ${{ inputs.config-path }}
       run: |
-        ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        key_path="$RUNNER_TEMP/payment-service-deploy-key"
+        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
         remote="$SSH_USER@$SSH_HOST"
-        sshpass -e ssh $ssh_opts "$remote" "
+        ssh $ssh_opts "$remote" "
           set -eu
           rm -rf '$REMOTE_DIR/migrate/migrations'
           tar -xzf '$REMOTE_DIR/migrations.tar.gz' -C '$REMOTE_DIR/migrate'
@@ -122,7 +132,6 @@ runs:
     - name: Restart application
       shell: bash
       env:
-        SSHPASS: ${{ inputs.password }}
         SSH_HOST: ${{ inputs.host }}
         SSH_PORT: ${{ inputs.port }}
         SSH_USER: ${{ inputs.user }}
@@ -130,9 +139,10 @@ runs:
         BINARY_NAME: ${{ inputs.binary-name }}
         SERVICE_NAME: ${{ inputs.service-name }}
       run: |
-        ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        key_path="$RUNNER_TEMP/payment-service-deploy-key"
+        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
         remote="$SSH_USER@$SSH_HOST"
-        sshpass -e ssh $ssh_opts "$remote" "
+        ssh $ssh_opts "$remote" "
           set -eu
           chmod +x '$REMOTE_DIR/$BINARY_NAME.new'
           mv '$REMOTE_DIR/$BINARY_NAME.new' '$REMOTE_DIR/$BINARY_NAME'

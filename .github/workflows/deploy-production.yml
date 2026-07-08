@@ -78,7 +78,7 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           port: ${{ secrets.SSH_PORT }}
           user: ${{ secrets.SSH_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           remote-dir: ${{ vars.REMOTE_DIR }}
           binary-path: ${{ vars.BUILD_DIR }}/${{ vars.APP_NAME }}
           binary-name: ${{ vars.APP_NAME }}
