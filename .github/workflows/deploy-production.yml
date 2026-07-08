@@ -1,4 +1,4 @@
-name: Deploy
+name: Deploy Production
 
 on:
   push:
@@ -82,3 +82,4 @@ jobs:
           binary-name: ${{ vars.APP_NAME }}
           config-content: ${{ secrets.APP_CONFIG }}
           config-path: ${{ vars.REMOTE_CONFIG_PATH }}
+          service-name: ${{ vars.SYSTEMD_SERVICE }}
