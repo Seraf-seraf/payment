@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -13,23 +14,16 @@ import (
 	"github.com/go-chi/traceid"
 	"github.com/justinas/alice"
 	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/Seraf-seraf/payment/pkg/metrics"
 	"github.com/Seraf-seraf/payment/ports"
 )
 
 //go:embed openapi.yaml
 var openAPIFS embed.FS
 
-var httpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-	Namespace: "payment_service",
-	Subsystem: "http",
-	Name:      "requests_total",
-	Help:      "Total number of HTTP requests processed by the API.",
-}, []string{"method", "route", "code"})
-
+// NewRouter создает HTTP router с middleware, OpenAPI-валидацией и handlers.
 func NewRouter(
 	logger *slog.Logger,
 	merchants ports.MerchantAuthenticator,
@@ -48,6 +42,7 @@ func NewRouter(
 			RecoverPanics: true,
 		}),
 	).Then)
+	r.Use(recordHTTPMetrics)
 
 	r.Handle("/metrics", promhttp.Handler())
 
@@ -64,6 +59,43 @@ func NewRouter(
 	})
 
 	return r
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+// WriteHeader сохраняет HTTP status code перед передачей ответа клиенту.
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// Write сохраняет status OK для ответов без явного WriteHeader.
+func (r *statusRecorder) Write(data []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(data)
+}
+
+func recordHTTPMetrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(recorder, r)
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		route := "unknown"
+		if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
+			if pattern := routeContext.RoutePattern(); pattern != "" {
+				route = pattern
+			}
+		}
+		metrics.HTTPRequestsTotal.WithLabelValues(r.Method, route, strconv.Itoa(status)).Inc()
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

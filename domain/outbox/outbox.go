@@ -7,14 +7,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// Status описывает состояние доставки outbox-события.
 type Status string
 
 const (
+	// StatusPending означает, что событие ожидает доставки.
 	StatusPending Status = "pending"
-	StatusSent    Status = "sent"
-	StatusFailed  Status = "failed"
+	// StatusSent означает, что событие успешно доставлено.
+	StatusSent Status = "sent"
+	// StatusFailed означает, что событие не удалось доставить после всех попыток.
+	StatusFailed Status = "failed"
 )
 
+// Event описывает событие outbox для асинхронной доставки callback мерчанту.
 type Event struct {
 	ID            uuid.UUID
 	AggregateType string

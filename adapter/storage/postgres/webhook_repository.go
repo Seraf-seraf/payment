@@ -10,16 +10,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// WebhookRepository реализует хранилище webhook-событий в PostgreSQL.
 type WebhookRepository struct {
-	pool *pgxpool.Pool
+	db queryer
 }
 
 var _ ports.WebhookEventRepository = (*WebhookRepository)(nil)
 
+// NewWebhookRepository создает PostgreSQL-репозиторий webhook-событий.
 func NewWebhookRepository(pool *pgxpool.Pool) *WebhookRepository {
-	return &WebhookRepository{pool: pool}
+	return &WebhookRepository{db: pool}
 }
 
+func newWebhookRepository(db queryer) *WebhookRepository {
+	return &WebhookRepository{db: db}
+}
+
+// Create сохраняет webhook-событие и возвращает false при дубле.
 func (r *WebhookRepository) Create(ctx context.Context, event webhookdomain.Event) (bool, error) {
 	rawPayload := event.RawPayload
 	if len(rawPayload) == 0 {
@@ -39,7 +46,7 @@ INSERT INTO webhook_events (
 ) VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8)
 ON CONFLICT (provider_name, provider_event_id) DO NOTHING`
 
-	tag, err := r.pool.Exec(ctx, query,
+	tag, err := r.db.Exec(ctx, query,
 		event.ID,
 		event.ProviderName,
 		event.ProviderEventID,
@@ -55,11 +62,12 @@ ON CONFLICT (provider_name, provider_event_id) DO NOTHING`
 	return tag.RowsAffected() > 0, nil
 }
 
+// MarkProcessed отмечает webhook-событие как обработанное.
 func (r *WebhookRepository) MarkProcessed(ctx context.Context, providerName, providerEventID string, processedAt time.Time) error {
 	const query = `
 UPDATE webhook_events
 SET processed_at = $3
 WHERE provider_name = $1 AND provider_event_id = $2`
-	_, err := r.pool.Exec(ctx, query, providerName, providerEventID, processedAt)
+	_, err := r.db.Exec(ctx, query, providerName, providerEventID, processedAt)
 	return err
 }

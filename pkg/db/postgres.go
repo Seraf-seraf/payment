@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// OpenPostgres создает pgxpool.Pool и проверяет соединение с PostgreSQL.
 func OpenPostgres(ctx context.Context, cfg config.Postgres) (*pgxpool.Pool, error) {
 	poolConfig, err := pgxpool.ParseConfig(cfg.DSN)
 	if err != nil {

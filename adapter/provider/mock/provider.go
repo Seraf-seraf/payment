@@ -13,20 +13,24 @@ import (
 	"github.com/Seraf-seraf/payment/ports"
 )
 
+// Provider реализует тестовый платежный провайдер.
 type Provider struct {
 	webhookSecret string
 }
 
 var _ ports.PaymentProvider = (*Provider)(nil)
 
+// New создает mock provider с секретом для проверки webhook.
 func New(webhookSecret string) *Provider {
 	return &Provider{webhookSecret: webhookSecret}
 }
 
+// Name возвращает имя провайдера.
 func (p *Provider) Name() string {
 	return "mock"
 }
 
+// CreatePayment возвращает тестовую ссылку оплаты без внешнего HTTP-запроса.
 func (p *Provider) CreatePayment(_ context.Context, req providerdomain.CreatePaymentRequest) (providerdomain.CreatePaymentResult, error) {
 	providerPaymentID := "mock_" + req.PaymentID
 	return providerdomain.CreatePaymentResult{
@@ -35,6 +39,7 @@ func (p *Provider) CreatePayment(_ context.Context, req providerdomain.CreatePay
 	}, nil
 }
 
+// VerifyWebhook проверяет HMAC-подпись mock webhook.
 func (p *Provider) VerifyWebhook(_ context.Context, headers http.Header, rawBody []byte) error {
 	if p.webhookSecret == "" {
 		return nil
@@ -47,6 +52,7 @@ func (p *Provider) VerifyWebhook(_ context.Context, headers http.Header, rawBody
 	return nil
 }
 
+// ParseWebhook преобразует mock webhook в нормализованное событие.
 func (p *Provider) ParseWebhook(_ context.Context, rawBody []byte) (providerdomain.WebhookEvent, error) {
 	var payload struct {
 		EventID           string               `json:"event_id"`

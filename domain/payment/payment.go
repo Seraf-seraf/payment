@@ -6,16 +6,25 @@ import (
 	"github.com/google/uuid"
 )
 
+// Status описывает состояние платежа.
 type Status string
 
 const (
-	StatusPending   Status = "pending"
+	// StatusCreating означает, что платеж создан локально, но провайдер еще не вернул ссылку оплаты.
+	StatusCreating Status = "creating"
+	// StatusPending означает, что платеж ожидает оплаты пользователем.
+	StatusPending Status = "pending"
+	// StatusSucceeded означает, что платеж успешно оплачен.
 	StatusSucceeded Status = "succeeded"
-	StatusFailed    Status = "failed"
-	StatusCanceled  Status = "canceled"
-	StatusRefunded  Status = "refunded"
+	// StatusFailed означает, что платеж завершился ошибкой.
+	StatusFailed Status = "failed"
+	// StatusCanceled означает, что платеж отменен.
+	StatusCanceled Status = "canceled"
+	// StatusRefunded означает, что платеж возвращен.
+	StatusRefunded Status = "refunded"
 )
 
+// Payment описывает платеж и его состояние в системе.
 type Payment struct {
 	ID                uuid.UUID
 	MerchantID        uuid.UUID

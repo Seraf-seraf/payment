@@ -2,6 +2,7 @@ package merchant
 
 import "github.com/google/uuid"
 
+// Merchant описывает клиента сервиса, который может создавать платежи.
 type Merchant struct {
 	ID           uuid.UUID
 	Name         string

@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Server реализует HTTP handlers, сгенерированные из OpenAPI контракта.
 type Server struct {
 	logger      *slog.Logger
 	merchants   ports.MerchantAuthenticator
@@ -27,6 +28,7 @@ type Server struct {
 	hmacMaxSkew time.Duration
 }
 
+// NewServer создает HTTP server handlers с зависимостями бизнес-слоя.
 func NewServer(
 	logger *slog.Logger,
 	merchants ports.MerchantAuthenticator,
@@ -43,10 +45,12 @@ func NewServer(
 	}
 }
 
+// GetHealth возвращает состояние HTTP API.
 func (s *Server) GetHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
+// CreatePayment обрабатывает запрос мерчанта на создание платежа.
 func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params CreatePaymentParams) {
 	rawBody, err := readBody(r)
 	if err != nil {
@@ -99,6 +103,7 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params Cr
 	writeJSON(w, status, paymentResponse(result.Payment))
 }
 
+// GetPayment возвращает платеж по идентификатору.
 func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request, paymentID uuid.UUID) {
 	payment, err := s.payments.GetPayment(r.Context(), paymentID)
 	if err != nil {
@@ -108,6 +113,7 @@ func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request, paymentID uu
 	writeJSON(w, http.StatusOK, paymentResponse(payment))
 }
 
+// ProviderWebhook принимает webhook от платежного провайдера.
 func (s *Server) ProviderWebhook(w http.ResponseWriter, r *http.Request, providerName string) {
 	rawBody, err := readBody(r)
 	if err != nil {
@@ -177,12 +183,16 @@ func paymentResponse(payment paymentdomain.Payment) PaymentResponse {
 	if payment.PaymentURL != "" {
 		paymentURL = &payment.PaymentURL
 	}
+	status := payment.Status
+	if status == paymentdomain.StatusCreating {
+		status = paymentdomain.StatusPending
+	}
 	return PaymentResponse{
 		PaymentId:   payment.ID,
 		OrderId:     payment.MerchantOrderID,
 		AmountMinor: payment.AmountMinor,
 		Currency:    payment.Currency,
-		Status:      PaymentStatus(payment.Status),
+		Status:      PaymentStatus(status),
 		PaymentUrl:  paymentURL,
 	}
 }

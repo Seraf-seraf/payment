@@ -8,8 +8,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultPath задает путь к конфигу по умолчанию.
 const DefaultPath = "configs/config.yaml"
 
+// Config содержит все настройки приложения.
 type Config struct {
 	App       App       `yaml:"app"`
 	HTTP      HTTP      `yaml:"http"`
@@ -17,20 +19,24 @@ type Config struct {
 	Security  Security  `yaml:"security"`
 	Providers Providers `yaml:"providers"`
 	Outbox    Outbox    `yaml:"outbox"`
+	Callback  Callback  `yaml:"callback"`
 }
 
+// App содержит общие настройки приложения.
 type App struct {
 	Name string `yaml:"name"`
 	Env  string `yaml:"env"`
 	Mode string `yaml:"mode"`
 }
 
+// HTTP содержит настройки HTTP-сервера.
 type HTTP struct {
 	Addr              string        `yaml:"addr"`
 	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
 	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
 }
 
+// Postgres содержит настройки подключения к PostgreSQL.
 type Postgres struct {
 	DSN             string        `yaml:"dsn"`
 	MaxOpenConns    int32         `yaml:"max_open_conns"`
@@ -38,21 +44,26 @@ type Postgres struct {
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
 }
 
+// Security содержит настройки безопасности запросов и секретов.
 type Security struct {
-	HMACMaxSkew time.Duration `yaml:"hmac_max_skew"`
+	HMACMaxSkew   time.Duration `yaml:"hmac_max_skew"`
+	EncryptionKey string        `yaml:"encryption_key"`
 }
 
+// Providers содержит настройки платежных провайдеров.
 type Providers struct {
 	Default string       `yaml:"default"`
 	Mock    MockProvider `yaml:"mock"`
 	TBank   TBank        `yaml:"tbank"`
 }
 
+// MockProvider содержит настройки тестового провайдера.
 type MockProvider struct {
 	Enabled       bool   `yaml:"enabled"`
 	WebhookSecret string `yaml:"webhook_secret"`
 }
 
+// TBank содержит настройки T-Bank провайдера.
 type TBank struct {
 	Enabled         bool   `yaml:"enabled"`
 	APIURL          string `yaml:"api_url"`
@@ -61,6 +72,7 @@ type TBank struct {
 	NotificationURL string `yaml:"notification_url"`
 }
 
+// Outbox содержит настройки worker доставки callback-событий.
 type Outbox struct {
 	Enabled      bool          `yaml:"enabled"`
 	PollInterval time.Duration `yaml:"poll_interval"`
@@ -69,6 +81,12 @@ type Outbox struct {
 	WorkerCount  int           `yaml:"worker_count"`
 }
 
+// Callback содержит настройки исходящих callback-запросов.
+type Callback struct {
+	Timeout time.Duration `yaml:"timeout"`
+}
+
+// Load загружает конфигурацию из YAML-файла и применяет env override.
 func Load(path string) (Config, error) {
 	cfg := defaultConfig()
 	if path != "" {
@@ -90,6 +108,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
+// LoadFromEnv загружает конфигурацию по пути из CONFIG_PATH или из DefaultPath.
 func LoadFromEnv() (Config, error) {
 	path := os.Getenv("CONFIG_PATH")
 	if path == "" {
@@ -137,6 +156,9 @@ func defaultConfig() Config {
 			MaxAttempts:  10,
 			WorkerCount:  1,
 		},
+		Callback: Callback{
+			Timeout: 5 * time.Second,
+		},
 	}
 }
 
@@ -155,5 +177,8 @@ func applyEnv(cfg *Config) {
 	}
 	if value := os.Getenv("TBANK_NOTIFICATION_URL"); value != "" {
 		cfg.Providers.TBank.NotificationURL = value
+	}
+	if value := os.Getenv("SECURITY_ENCRYPTION_KEY"); value != "" {
+		cfg.Security.EncryptionKey = value
 	}
 }

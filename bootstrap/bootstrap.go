@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Seraf-seraf/payment/adapter/httpapi"
+	"github.com/Seraf-seraf/payment/adapter/notification/httpcallback"
 	mockprovider "github.com/Seraf-seraf/payment/adapter/provider/mock"
 	tbankprovider "github.com/Seraf-seraf/payment/adapter/provider/tbank"
 	postgresstorage "github.com/Seraf-seraf/payment/adapter/storage/postgres"
@@ -16,10 +17,12 @@ import (
 	"github.com/Seraf-seraf/payment/pkg/logger"
 	"github.com/Seraf-seraf/payment/ports"
 	merchantservice "github.com/Seraf-seraf/payment/service/merchant"
+	outboxservice "github.com/Seraf-seraf/payment/service/outbox"
 	paymentservice "github.com/Seraf-seraf/payment/service/payment"
 	webhookservice "github.com/Seraf-seraf/payment/service/webhook"
 )
 
+// Run собирает зависимости приложения, запускает выбранные компоненты и возвращает функцию остановки.
 func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, error) {
 	log := logger.New(cfg.App.Name, cfg.App.Env)
 	var closers []func()
@@ -33,9 +36,11 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	closers = append(closers, pool.Close)
 	log.Info("postgres connected")
 
-	merchantRepository := postgresstorage.NewMerchantRepository(pool)
+	merchantRepository := postgresstorage.NewMerchantRepository(pool, cfg.Security.EncryptionKey)
 	paymentRepository := postgresstorage.NewPaymentRepository(pool)
 	webhookRepository := postgresstorage.NewWebhookRepository(pool)
+	outboxRepository := postgresstorage.NewOutboxRepository(pool)
+	txManager := postgresstorage.NewTransactionManager(pool, cfg.Security.EncryptionKey)
 	providers, err := buildProviderRegistry(cfg)
 	if err != nil {
 		return nil, err
@@ -43,29 +48,60 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	merchantService := merchantservice.NewService(merchantRepository)
 	paymentService := paymentservice.NewService(paymentRepository, providers, func() time.Time {
 		return time.Now().UTC()
-	})
-	webhookService := webhookservice.NewService(providers, paymentRepository, webhookRepository)
+	}, txManager)
+	webhookService := webhookservice.NewService(providers, paymentRepository, webhookRepository, outboxRepository, txManager)
 
-	router := httpapi.NewRouter(log, merchantService, paymentService, webhookService, cfg.Security.HMACMaxSkew)
-	server := &http.Server{
-		Addr:              cfg.HTTP.Addr,
-		Handler:           router,
-		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
+	var server *http.Server
+	mode := cfg.App.Mode
+	if mode == "" {
+		mode = "all"
+	}
+	if mode != "api" && mode != "worker" && mode != "all" {
+		return nil, errors.New("app mode must be api, worker or all")
 	}
 
-	go func() {
-		log.Info("http server started", slog.String("addr", cfg.HTTP.Addr))
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("http server failed", slog.Any("error", err))
+	if mode == "api" || mode == "all" {
+		router := httpapi.NewRouter(log, merchantService, paymentService, webhookService, cfg.Security.HMACMaxSkew)
+		server = &http.Server{
+			Addr:              cfg.HTTP.Addr,
+			Handler:           router,
+			ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		}
-	}()
+		go func() {
+			log.Info("http server started", slog.String("addr", cfg.HTTP.Addr))
+			if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("http server failed", slog.Any("error", err))
+			}
+		}()
+	}
+
+	var worker ports.OutboxWorker
+	if cfg.Outbox.Enabled && (mode == "worker" || mode == "all") {
+		callbackSender := httpcallback.New(cfg.Callback.Timeout)
+		worker = outboxservice.NewWorker(log.With(slog.String("component", "outbox_worker")), outboxservice.Config{
+			PollInterval: cfg.Outbox.PollInterval,
+			BatchSize:    cfg.Outbox.BatchSize,
+			MaxAttempts:  cfg.Outbox.MaxAttempts,
+			WorkerCount:  cfg.Outbox.WorkerCount,
+		}, merchantRepository, paymentRepository, outboxRepository, callbackSender, txManager, func() time.Time {
+			return time.Now().UTC()
+		})
+		worker.Start(ctx)
+		log.Info("outbox worker started", slog.Int("worker_count", cfg.Outbox.WorkerCount))
+	}
 
 	return func(shutdownCtx context.Context) error {
-		err := server.Shutdown(shutdownCtx)
+		var shutdownErr error
+		if worker != nil {
+			shutdownErr = errors.Join(shutdownErr, worker.Stop(shutdownCtx))
+		}
+		if server != nil {
+			shutdownErr = errors.Join(shutdownErr, server.Shutdown(shutdownCtx))
+		}
 		for _, close := range closers {
 			close()
 		}
-		return err
+		return shutdownErr
 	}, nil
 }
 

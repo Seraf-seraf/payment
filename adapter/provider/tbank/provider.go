@@ -25,6 +25,7 @@ const (
 	defaultAPIURL = "https://securepay.tinkoff.ru/v2"
 )
 
+// Options задает параметры подключения к T-Bank acquiring API.
 type Options struct {
 	APIURL          string
 	TerminalKey     string
@@ -33,6 +34,7 @@ type Options struct {
 	HTTPClient      *http.Client
 }
 
+// Provider реализует интеграцию с T-Bank acquiring API.
 type Provider struct {
 	apiURL          string
 	terminalKey     string
@@ -43,6 +45,7 @@ type Provider struct {
 
 var _ ports.PaymentProvider = (*Provider)(nil)
 
+// New создает T-Bank provider и валидирует обязательные параметры.
 func New(options Options) (*Provider, error) {
 	if options.TerminalKey == "" {
 		return nil, errors.New("tbank terminal key is required")
@@ -67,10 +70,12 @@ func New(options Options) (*Provider, error) {
 	}, nil
 }
 
+// Name возвращает имя провайдера.
 func (p *Provider) Name() string {
 	return "tbank"
 }
 
+// CreatePayment создает платеж через T-Bank Init API.
 func (p *Provider) CreatePayment(ctx context.Context, req providerdomain.CreatePaymentRequest) (providerdomain.CreatePaymentResult, error) {
 	payload := map[string]any{
 		"TerminalKey": p.terminalKey,
@@ -134,6 +139,7 @@ func (p *Provider) CreatePayment(ctx context.Context, req providerdomain.CreateP
 	}, nil
 }
 
+// VerifyWebhook проверяет token уведомления T-Bank.
 func (p *Provider) VerifyWebhook(_ context.Context, _ http.Header, rawBody []byte) error {
 	payload, err := parseNotification(rawBody)
 	if err != nil {
@@ -149,6 +155,7 @@ func (p *Provider) VerifyWebhook(_ context.Context, _ http.Header, rawBody []byt
 	return nil
 }
 
+// ParseWebhook преобразует уведомление T-Bank в нормализованное событие.
 func (p *Provider) ParseWebhook(_ context.Context, rawBody []byte) (providerdomain.WebhookEvent, error) {
 	payload, err := parseNotification(rawBody)
 	if err != nil {

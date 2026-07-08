@@ -16,6 +16,7 @@ postgres:
 
 security:
   hmac_max_skew: "5m"
+  encryption_key: ""
 
 providers:
   default: mock
@@ -35,3 +36,6 @@ outbox:
   batch_size: 100
   max_attempts: 10
   worker_count: 1
+
+callback:
+  timeout: "5s"

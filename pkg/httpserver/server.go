@@ -8,11 +8,13 @@ import (
 	"time"
 )
 
+// Server оборачивает http.Server и logger для управляемого запуска.
 type Server struct {
 	server *http.Server
 	logger *slog.Logger
 }
 
+// New создает HTTP server wrapper.
 func New(addr string, handler http.Handler, readHeaderTimeout time.Duration, logger *slog.Logger) *Server {
 	return &Server{
 		server: &http.Server{
@@ -24,6 +26,7 @@ func New(addr string, handler http.Handler, readHeaderTimeout time.Duration, log
 	}
 }
 
+// Start запускает HTTP server и вызывает onFatal при фатальной ошибке.
 func (s *Server) Start(onFatal func()) {
 	go func() {
 		s.logger.Info("http server started", slog.String("addr", s.server.Addr))
@@ -34,6 +37,7 @@ func (s *Server) Start(onFatal func()) {
 	}()
 }
 
+// Shutdown корректно останавливает HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }

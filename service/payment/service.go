@@ -8,31 +8,48 @@ import (
 
 	paymentdomain "github.com/Seraf-seraf/payment/domain/payment"
 	providerdomain "github.com/Seraf-seraf/payment/domain/provider"
+	"github.com/Seraf-seraf/payment/pkg/metrics"
 	"github.com/Seraf-seraf/payment/ports"
 	"github.com/google/uuid"
 )
 
 var (
+	// ErrAlreadyExists означает конфликт уникального ключа при создании платежа.
 	ErrAlreadyExists = errors.New("payment already exists")
-	ErrNotFound      = errors.New("payment not found")
+	// ErrNotFound означает, что платеж не найден.
+	ErrNotFound = errors.New("payment not found")
+	// ErrPaymentInProgress означает, что идемпотентный платеж еще создается.
+	ErrPaymentInProgress = errors.New("payment creation is in progress")
+	// ErrPaymentCreationFailed означает, что предыдущая попытка создания платежа завершилась ошибкой.
+	ErrPaymentCreationFailed = errors.New("payment creation failed")
+	// ErrInvalidStatusTransition означает запрещенный переход статуса платежа.
+	ErrInvalidStatusTransition = errors.New("invalid payment status transition")
 )
 
+// Service реализует сценарии создания и чтения платежей.
 type Service struct {
 	payments  ports.PaymentRepository
 	providers ports.ProviderRegistry
 	now       func() time.Time
+	tx        ports.TransactionManager
 }
 
 var _ ports.PaymentUseCase = (*Service)(nil)
 
-func NewService(payments ports.PaymentRepository, providers ports.ProviderRegistry, now func() time.Time) *Service {
-	return &Service{
+// NewService создает платежный сервис.
+func NewService(payments ports.PaymentRepository, providers ports.ProviderRegistry, now func() time.Time, tx ...ports.TransactionManager) *Service {
+	service := &Service{
 		payments:  payments,
 		providers: providers,
 		now:       now,
 	}
+	if len(tx) > 0 {
+		service.tx = tx[0]
+	}
+	return service
 }
 
+// CreatePayment создает платеж или возвращает результат существующего идемпотентного платежа.
 func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequest) (ports.CreatePaymentResult, error) {
 	idempotencyKey := req.IdempotencyKey
 	if idempotencyKey == "" {
@@ -41,7 +58,7 @@ func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequ
 
 	existing, err := s.payments.FindByMerchantAndIdempotencyKey(ctx, req.Merchant.ID, idempotencyKey)
 	if err == nil {
-		return ports.CreatePaymentResult{Payment: existing, Created: false}, nil
+		return idempotentResult(existing)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return ports.CreatePaymentResult{}, err
@@ -62,7 +79,7 @@ func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequ
 		AmountMinor:     req.AmountMinor,
 		Currency:        req.Currency,
 		Description:     req.Description,
-		Status:          paymentdomain.StatusPending,
+		Status:          paymentdomain.StatusCreating,
 		Metadata:        map[string]any{},
 		CreatedAt:       now,
 		UpdatedAt:       now,
@@ -73,11 +90,12 @@ func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequ
 			if findErr != nil {
 				return ports.CreatePaymentResult{}, findErr
 			}
-			return ports.CreatePaymentResult{Payment: existing, Created: false}, nil
+			return idempotentResult(existing)
 		}
 		return ports.CreatePaymentResult{}, err
 	}
 
+	startedAt := time.Now()
 	providerResult, err := provider.CreatePayment(ctx, providerdomain.CreatePaymentRequest{
 		PaymentID:       created.ID.String(),
 		OrderID:         req.OrderID,
@@ -91,19 +109,49 @@ func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequ
 		MerchantSuccess: req.Merchant.SuccessURL,
 		MerchantFail:    req.Merchant.FailURL,
 	})
+	metrics.ObserveProviderRequest(req.Merchant.ProviderName, "create_payment", err == nil, time.Since(startedAt).Seconds())
 	if err != nil {
+		if markErr := s.payments.UpdateStatusIfAllowed(ctx, created.ID, paymentdomain.StatusFailed, []paymentdomain.Status{paymentdomain.StatusCreating}); markErr != nil && !errors.Is(markErr, ErrInvalidStatusTransition) {
+			return ports.CreatePaymentResult{}, errors.Join(err, markErr)
+		}
 		return ports.CreatePaymentResult{}, err
 	}
 
-	if err := s.payments.UpdateProviderData(ctx, created.ID, providerResult.ProviderPaymentID, providerResult.PaymentURL); err != nil {
+	if err := s.payments.UpdateProviderDataAndStatus(
+		ctx,
+		created.ID,
+		providerResult.ProviderPaymentID,
+		providerResult.PaymentURL,
+		paymentdomain.StatusPending,
+		[]paymentdomain.Status{paymentdomain.StatusCreating},
+	); err != nil {
 		return ports.CreatePaymentResult{}, err
 	}
 	created.ProviderPaymentID = providerResult.ProviderPaymentID
 	created.PaymentURL = providerResult.PaymentURL
+	created.Status = paymentdomain.StatusPending
+	metrics.PaymentsCreatedTotal.Inc()
 
 	return ports.CreatePaymentResult{Payment: created, Created: true}, nil
 }
 
+// GetPayment возвращает платеж по идентификатору.
 func (s *Service) GetPayment(ctx context.Context, id uuid.UUID) (paymentdomain.Payment, error) {
 	return s.payments.FindByID(ctx, id)
+}
+
+func idempotentResult(existing paymentdomain.Payment) (ports.CreatePaymentResult, error) {
+	switch existing.Status {
+	case paymentdomain.StatusPending, paymentdomain.StatusSucceeded, paymentdomain.StatusCanceled, paymentdomain.StatusRefunded:
+		if existing.PaymentURL == "" || existing.ProviderPaymentID == "" {
+			return ports.CreatePaymentResult{}, ErrPaymentInProgress
+		}
+		return ports.CreatePaymentResult{Payment: existing, Created: false}, nil
+	case paymentdomain.StatusCreating:
+		return ports.CreatePaymentResult{}, ErrPaymentInProgress
+	case paymentdomain.StatusFailed:
+		return ports.CreatePaymentResult{}, ErrPaymentCreationFailed
+	default:
+		return ports.CreatePaymentResult{}, ErrInvalidStatusTransition
+	}
 }

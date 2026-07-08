@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Event описывает сохраненный webhook от платежного провайдера.
 type Event struct {
 	ID                uuid.UUID
 	ProviderName      string
