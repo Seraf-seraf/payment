@@ -124,8 +124,8 @@ runs:
           set -eu
           rm -rf '$REMOTE_DIR/migrate/migrations'
           tar -xzf '$REMOTE_DIR/migrations.tar.gz' -C '$REMOTE_DIR/migrate'
-          find '$REMOTE_DIR/migrate' -type d -exec chmod 2775 {} +
-          find '$REMOTE_DIR/migrate' -type f -exec chmod ug+rw {} +
+          find '$REMOTE_DIR/migrate/migrations' -type d -exec chmod 2775 {} +
+          find '$REMOTE_DIR/migrate/migrations' -type f -exec chmod ug+rw {} +
           chmod +x '$REMOTE_DIR/migrate/configdsn' '$REMOTE_DIR/migrate/goose'
           dsn=\"\$('$REMOTE_DIR/migrate/configdsn' -config '$CONFIG_PATH')\"
           '$REMOTE_DIR/migrate/goose' -dir '$REMOTE_DIR/migrate/migrations' postgres \"\$dsn\" up
