@@ -11,10 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  environment: production
   test:
     name: Test, fmt and vet
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,6 +31,7 @@ jobs:
   build:
     name: Build binary
     runs-on: ubuntu-latest
+    environment: production
     needs: test
     steps:
       - name: Checkout
@@ -59,6 +60,7 @@ jobs:
   deploy:
     name: Deploy to hosting
     runs-on: ubuntu-latest
+    environment: production
     needs: build
     steps:
       - name: Checkout
