@@ -72,6 +72,13 @@ runs:
         ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
         remote="$SSH_USER@$SSH_HOST"
 
+        # Проверить, что бинарный файл существует
+        if [ ! -f "$BINARY_PATH" ]; then
+          echo "❌ Ошибка: бинарный файл не найден: $BINARY_PATH"
+          ls -la "$(dirname "$BINARY_PATH")" || true
+          exit 1
+        fi
+
         sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
         sshpass -e scp $ssh_opts "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
         sshpass -e scp $ssh_opts "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
