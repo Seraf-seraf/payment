@@ -1,0 +1,106 @@
+name: deploy
+description: Copy binary and config to host over SSH password auth, then restart application.
+
+inputs:
+  host:
+    description: SSH host.
+    required: true
+  port:
+    description: SSH port.
+    required: true
+    default: "22"
+  user:
+    description: SSH user.
+    required: true
+  password:
+    description: SSH password.
+    required: true
+  remote-dir:
+    description: Application directory on remote host.
+    required: true
+  binary-path:
+    description: Local path to built binary.
+    required: true
+  binary-name:
+    description: Binary file name on remote host.
+    required: true
+  config-content:
+    description: Full application config content.
+    required: true
+  config-path:
+    description: Config path on remote host.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install sshpass
+      shell: bash
+      run: |
+        if ! command -v sshpass >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+        fi
+
+    - name: Prepare config file
+      shell: bash
+      env:
+        CONFIG_CONTENT: ${{ inputs.config-content }}
+      run: |
+        install -d .deploy
+        printf '%s' "$CONFIG_CONTENT" > .deploy/config.yaml
+        chmod 600 .deploy/config.yaml
+
+    - name: Copy binary and config
+      shell: bash
+      env:
+        SSHPASS: ${{ inputs.password }}
+        SSH_HOST: ${{ inputs.host }}
+        SSH_PORT: ${{ inputs.port }}
+        SSH_USER: ${{ inputs.user }}
+        REMOTE_DIR: ${{ inputs.remote-dir }}
+        BINARY_PATH: ${{ inputs.binary-path }}
+        BINARY_NAME: ${{ inputs.binary-name }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        remote="$SSH_USER@$SSH_HOST"
+
+        sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")'"
+        sshpass -e scp $ssh_opts "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
+        sshpass -e scp $ssh_opts .deploy/config.yaml "$remote:$CONFIG_PATH"
+
+    - name: Restart application
+      shell: bash
+      env:
+        SSHPASS: ${{ inputs.password }}
+        SSH_HOST: ${{ inputs.host }}
+        SSH_PORT: ${{ inputs.port }}
+        SSH_USER: ${{ inputs.user }}
+        REMOTE_DIR: ${{ inputs.remote-dir }}
+        BINARY_NAME: ${{ inputs.binary-name }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+      run: |
+        ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        remote="$SSH_USER@$SSH_HOST"
+        sshpass -e ssh $ssh_opts "$remote" "
+          set -eu
+          pid_file='$REMOTE_DIR/app.pid'
+          chmod +x '$REMOTE_DIR/$BINARY_NAME.new'
+          if [ -f \"\$pid_file\" ]; then
+            old_pid=\"\$(cat \"\$pid_file\")\"
+            if [ -n \"\$old_pid\" ] && kill -0 \"\$old_pid\" >/dev/null 2>&1; then
+              kill \"\$old_pid\"
+              for _ in 1 2 3 4 5; do
+                if ! kill -0 \"\$old_pid\" >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 1
+              done
+            fi
+          fi
+          mv '$REMOTE_DIR/$BINARY_NAME.new' '$REMOTE_DIR/$BINARY_NAME'
+          cd '$REMOTE_DIR'
+          nohup env CONFIG_PATH='$CONFIG_PATH' './$BINARY_NAME' > app.log 2>&1 &
+          echo \$! > \"\$pid_file\"
+        "

@@ -1,0 +1,23 @@
+name: test
+description: Run fmt, vet and tests.
+
+runs:
+  using: composite
+  steps:
+    - name: Check gofmt
+      shell: bash
+      run: |
+        files="$(gofmt -l ./cmd ./adapter ./app ./bootstrap ./domain ./pkg ./ports ./service)"
+        if [ -n "$files" ]; then
+          echo "Следующие файлы требуют gofmt:"
+          echo "$files"
+          exit 1
+        fi
+
+    - name: Run go vet
+      shell: bash
+      run: go vet ./...
+
+    - name: Run tests
+      shell: bash
+      run: go test ./...

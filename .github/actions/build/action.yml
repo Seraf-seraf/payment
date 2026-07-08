@@ -1,0 +1,36 @@
+name: build
+description: Build application binary.
+
+inputs:
+  app-name:
+    description: Binary file name.
+    required: true
+  output-dir:
+    description: Directory for build artifacts.
+    required: true
+    default: bin
+
+runs:
+  using: composite
+  steps:
+    - name: Build binary
+      shell: bash
+      env:
+        APP_NAME: ${{ inputs.app-name }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        mkdir -p "$OUTPUT_DIR"
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -trimpath \
+          -ldflags="-s -w" \
+          -o "$OUTPUT_DIR/$APP_NAME" \
+          ./cmd/api
+
+    - name: Check binary
+      shell: bash
+      env:
+        APP_NAME: ${{ inputs.app-name }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        test -x "$OUTPUT_DIR/$APP_NAME"
+        file "$OUTPUT_DIR/$APP_NAME"
