@@ -1,5 +1,5 @@
 name: deploy
-description: Copy binary and config to host over SSH key auth, then restart application.
+description: Upload a release bundle over SSH, run migrations, and restart application.
 
 inputs:
   host:
@@ -52,63 +52,43 @@ runs:
         printf '%s\n' "$SSH_PRIVATE_KEY" > "$key_path"
         chmod 600 "$key_path"
 
-    - name: Prepare deploy files
+    - name: Prepare release bundle
       shell: bash
       env:
-        CONFIG_CONTENT: ${{ inputs.config-content }}
-      run: |
-        deploy_dir="$RUNNER_TEMP/payment-service-deploy"
-        rm -rf "$deploy_dir"
-        install -d "$deploy_dir"
-
-        printf '%s' "$CONFIG_CONTENT" > "$deploy_dir/config.yaml"
-        chmod 600 "$deploy_dir/config.yaml"
-
-        tar -czf "$deploy_dir/migrations.tar.gz" migrations
-
-    - name: Copy binary config and migrations
-      shell: bash
-      env:
-        SSH_HOST: ${{ inputs.host }}
-        SSH_PORT: ${{ inputs.port }}
-        SSH_USER: ${{ inputs.user }}
-        REMOTE_DIR: ${{ inputs.remote-dir }}
         BINARY_PATH: ${{ inputs.binary-path }}
         BINARY_NAME: ${{ inputs.binary-name }}
-        CONFIG_PATH: ${{ inputs.config-path }}
+        CONFIG_CONTENT: ${{ inputs.config-content }}
       run: |
-        key_path="$RUNNER_TEMP/payment-service-deploy-key"
-        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
-        rsync_rsh="ssh -i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
-        remote="$SSH_USER@$SSH_HOST"
+        release_dir="$RUNNER_TEMP/payment-service-release"
+        rm -rf "$release_dir"
+        install -d "$release_dir"
 
-        # Проверить, что бинарный файл существует
         if [ ! -f "$BINARY_PATH" ]; then
-          echo "❌ Ошибка: бинарный файл не найден: $BINARY_PATH"
+          echo "binary file not found: $BINARY_PATH"
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
         if [ ! -f "$(dirname "$BINARY_PATH")/configdsn" ]; then
-          echo "❌ Ошибка: бинарный файл configdsn не найден"
+          echo "configdsn binary not found"
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
         if [ ! -f "$(dirname "$BINARY_PATH")/goose" ]; then
-          echo "❌ Ошибка: бинарный файл goose не найден"
+          echo "goose binary not found"
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
-        chmod +x "$BINARY_PATH" "$(dirname "$BINARY_PATH")/configdsn" "$(dirname "$BINARY_PATH")/goose"
 
-        ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
-        rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
-        rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/configdsn" "$remote:$REMOTE_DIR/migrate/configdsn"
-        rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/goose" "$remote:$REMOTE_DIR/migrate/goose"
-        rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
-        rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
-        ssh $ssh_opts "$remote" "chmod 660 '$CONFIG_PATH'"
+        install -m 755 "$BINARY_PATH" "$release_dir/$BINARY_NAME"
+        install -m 755 "$(dirname "$BINARY_PATH")/configdsn" "$release_dir/configdsn"
+        install -m 755 "$(dirname "$BINARY_PATH")/goose" "$release_dir/goose"
+        cp -R migrations "$release_dir/migrations"
+        printf '%s' "$CONFIG_CONTENT" > "$release_dir/config.yaml"
+        chmod 640 "$release_dir/config.yaml"
 
-    - name: Run migrations
+        tar -czf "$RUNNER_TEMP/payment-service-release.tar.gz" -C "$release_dir" .
+
+    - name: Upload and activate release
       shell: bash
       env:
         SSH_HOST: ${{ inputs.host }}
@@ -116,38 +96,37 @@ runs:
         SSH_USER: ${{ inputs.user }}
         REMOTE_DIR: ${{ inputs.remote-dir }}
         CONFIG_PATH: ${{ inputs.config-path }}
-      run: |
-        key_path="$RUNNER_TEMP/payment-service-deploy-key"
-        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
-        remote="$SSH_USER@$SSH_HOST"
-        ssh $ssh_opts "$remote" "
-          set -eu
-          rm -rf '$REMOTE_DIR/migrate/migrations'
-          tar -xzf '$REMOTE_DIR/migrations.tar.gz' -C '$REMOTE_DIR/migrate'
-          find '$REMOTE_DIR/migrate/migrations' -type d -exec chmod 2775 {} +
-          find '$REMOTE_DIR/migrate/migrations' -type f -exec chmod ug+rw {} +
-          chmod +x '$REMOTE_DIR/migrate/configdsn' '$REMOTE_DIR/migrate/goose'
-          dsn=\"\$('$REMOTE_DIR/migrate/configdsn' -config '$CONFIG_PATH')\"
-          '$REMOTE_DIR/migrate/goose' -dir '$REMOTE_DIR/migrate/migrations' postgres \"\$dsn\" up
-        "
-
-    - name: Restart application
-      shell: bash
-      env:
-        SSH_HOST: ${{ inputs.host }}
-        SSH_PORT: ${{ inputs.port }}
-        SSH_USER: ${{ inputs.user }}
-        REMOTE_DIR: ${{ inputs.remote-dir }}
         BINARY_NAME: ${{ inputs.binary-name }}
         SERVICE_NAME: ${{ inputs.service-name }}
       run: |
         key_path="$RUNNER_TEMP/payment-service-deploy-key"
-        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        release_id="${GITHUB_SHA:-manual-$(date +%Y%m%d%H%M%S)}"
+        bundle_path="$RUNNER_TEMP/payment-service-release.tar.gz"
         remote="$SSH_USER@$SSH_HOST"
-        ssh $ssh_opts "$remote" "
-          set -eu
-          chmod +x '$REMOTE_DIR/$BINARY_NAME.new'
-          mv '$REMOTE_DIR/$BINARY_NAME.new' '$REMOTE_DIR/$BINARY_NAME'
-          sudo -n systemctl restart '$SERVICE_NAME'
-          sudo -n systemctl --no-pager --full status '$SERVICE_NAME'
-        "
+        ssh_opts="-i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        rsync_rsh="ssh -i $key_path -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+
+        ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR/releases' '$(dirname "$CONFIG_PATH")'"
+        rsync -az -e "$rsync_rsh" "$bundle_path" "$remote:$REMOTE_DIR/releases/$release_id.tar.gz"
+
+        ssh $ssh_opts "$remote" \
+          "REMOTE_DIR='$REMOTE_DIR' CONFIG_PATH='$CONFIG_PATH' BINARY_NAME='$BINARY_NAME' SERVICE_NAME='$SERVICE_NAME' RELEASE_ID='$release_id' bash -s" <<'REMOTE'
+        set -eu
+
+        release_dir="$REMOTE_DIR/releases/$RELEASE_ID"
+        rm -rf "$release_dir"
+        mkdir -p "$release_dir"
+        tar -xzf "$REMOTE_DIR/releases/$RELEASE_ID.tar.gz" -C "$release_dir"
+
+        chmod +x "$release_dir/$BINARY_NAME" "$release_dir/configdsn" "$release_dir/goose"
+        install -m 640 "$release_dir/config.yaml" "$CONFIG_PATH"
+        chgrp payment-deploy "$CONFIG_PATH"
+
+        dsn="$("$release_dir/configdsn" -config "$CONFIG_PATH")"
+        "$release_dir/goose" -dir "$release_dir/migrations" postgres "$dsn" up
+
+        install -m 755 "$release_dir/$BINARY_NAME" "$REMOTE_DIR/$BINARY_NAME.new"
+        mv "$REMOTE_DIR/$BINARY_NAME.new" "$REMOTE_DIR/$BINARY_NAME"
+        sudo -n systemctl restart "$SERVICE_NAME"
+        sudo -n systemctl --no-pager --full status "$SERVICE_NAME"
+        REMOTE
