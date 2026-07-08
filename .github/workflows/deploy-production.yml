@@ -76,7 +76,7 @@ jobs:
         uses: ./.github/actions/deploy
         with:
           host: ${{ secrets.SSH_HOST }}
-          port: ${{ secrets.SSH_PORT || '22' }}
+          port: ${{ secrets.SSH_PORT }}
           user: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           remote-dir: ${{ vars.REMOTE_DIR }}
