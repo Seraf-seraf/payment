@@ -1,0 +1,37 @@
+app:
+  name: payment-service
+  env: local
+  mode: all
+
+http:
+  addr: ":8080"
+  read_header_timeout: "5s"
+  shutdown_timeout: "10s"
+
+postgres:
+  dsn: "postgres://payment:payment@localhost:5432/payment?sslmode=disable"
+  max_open_conns: 10
+  max_idle_conns: 5
+  conn_max_lifetime: "30m"
+
+security:
+  hmac_max_skew: "5m"
+
+providers:
+  default: mock
+  mock:
+    enabled: true
+    webhook_secret: "change-me"
+  tbank:
+    enabled: false
+    api_url: "https://securepay.tinkoff.ru/v2"
+    terminal_key: ""
+    password: ""
+    webhook_secret: ""
+
+outbox:
+  enabled: true
+  poll_interval: "1s"
+  batch_size: 100
+  max_attempts: 10
+  worker_count: 1

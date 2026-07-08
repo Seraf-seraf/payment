@@ -2,49 +2,35 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/example/go-swagger-template/internal/httpapi"
+	"github.com/Seraf-seraf/payment/app"
+	"github.com/Seraf-seraf/payment/pkg/config"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil)).With(slog.String("app", "go-swagger-template"))
-	addr := env("HTTP_ADDR", ":8080")
-
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           httpapi.NewRouter(logger),
-		ReadHeaderTimeout: 5 * time.Second,
+	cfg, err := config.LoadFromEnv()
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("load config failed", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		logger.Info("http server started", slog.String("addr", addr))
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("http server failed", slog.Any("error", err))
-			stop()
-		}
-	}()
+	application, err := app.Run(ctx, cfg)
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("start app failed", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("http server shutdown failed", slog.Any("error", err))
+	if err := application.Stop(shutdownCtx); err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("app shutdown failed", slog.Any("error", err))
 	}
-}
-
-func env(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }

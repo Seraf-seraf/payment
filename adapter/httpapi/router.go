@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
@@ -15,57 +16,60 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/Seraf-seraf/payment/ports"
 )
 
 //go:embed openapi.yaml
 var openAPIFS embed.FS
 
 var httpRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-	Namespace: "go_swagger_template",
+	Namespace: "payment_service",
 	Subsystem: "http",
 	Name:      "requests_total",
 	Help:      "Total number of HTTP requests processed by the API.",
 }, []string{"method", "route", "code"})
 
-func NewRouter(logger *slog.Logger) http.Handler {
+func NewRouter(
+	logger *slog.Logger,
+	merchants ports.MerchantAuthenticator,
+	payments ports.PaymentUseCase,
+	webhooks ports.WebhookHandler,
+	hmacMaxSkew time.Duration,
+) http.Handler {
 	r := chi.NewRouter()
 
-	logSchema := httplog.SchemaECS.Concise(false)
 	requestLogger := logger.With(slog.String("component", "http"))
-	chain := alice.New(
+	r.Use(alice.New(
 		traceid.Middleware,
 		httplog.RequestLogger(requestLogger, &httplog.Options{
 			Level:         slog.LevelInfo,
-			Schema:        logSchema,
+			Schema:        httplog.SchemaECS.Concise(false),
 			RecoverPanics: true,
 		}),
-	)
-	r.Use(chain.Then)
+	).Then)
 
 	r.Handle("/metrics", promhttp.Handler())
 
 	spec := mustOpenAPISpec()
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(nethttpmiddleware.OapiRequestValidator(spec))
-		api.Get("/health", instrument("GET", "/api/v1/health", healthHandler()))
+		server := NewServer(logger, merchants, payments, webhooks, hmacMaxSkew)
+		HandlerWithOptions(server, ChiServerOptions{
+			BaseRouter: api,
+			ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) {
+				writeError(w, http.StatusBadRequest, "bad_request", "Некорректный запрос.")
+			},
+		})
 	})
 
 	return r
 }
 
-func healthHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	}
-}
-
-func instrument(method, route string, handler http.Handler) http.HandlerFunc {
-	wrapped := promhttp.InstrumentHandlerCounter(httpRequestsTotal.MustCurryWith(prometheus.Labels{
-		"method": method,
-		"route":  route,
-	}), handler)
-	return wrapped.ServeHTTP
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func mustOpenAPISpec() *openapi3.T {
