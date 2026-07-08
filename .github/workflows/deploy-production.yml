@@ -1,5 +1,4 @@
 name: Deploy Production
-environment: production
 
 on:
   push:
@@ -12,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  environment: production
   test:
     name: Test, fmt and vet
     runs-on: ubuntu-latest
