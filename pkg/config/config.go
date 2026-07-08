@@ -54,11 +54,11 @@ type MockProvider struct {
 }
 
 type TBank struct {
-	Enabled       bool   `yaml:"enabled"`
-	APIURL        string `yaml:"api_url"`
-	TerminalKey   string `yaml:"terminal_key"`
-	Password      string `yaml:"password"`
-	WebhookSecret string `yaml:"webhook_secret"`
+	Enabled         bool   `yaml:"enabled"`
+	APIURL          string `yaml:"api_url"`
+	TerminalKey     string `yaml:"terminal_key"`
+	Password        string `yaml:"password"`
+	NotificationURL string `yaml:"notification_url"`
 }
 
 type Outbox struct {
@@ -153,7 +153,7 @@ func applyEnv(cfg *Config) {
 	if value := os.Getenv("TBANK_PASSWORD"); value != "" {
 		cfg.Providers.TBank.Password = value
 	}
-	if value := os.Getenv("TBANK_WEBHOOK_SECRET"); value != "" {
-		cfg.Providers.TBank.WebhookSecret = value
+	if value := os.Getenv("TBANK_NOTIFICATION_URL"); value != "" {
+		cfg.Providers.TBank.NotificationURL = value
 	}
 }

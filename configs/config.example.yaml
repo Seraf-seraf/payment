@@ -27,7 +27,7 @@ providers:
     api_url: "https://securepay.tinkoff.ru/v2"
     terminal_key: ""
     password: ""
-    webhook_secret: ""
+    notification_url: "https://example.com/api/v1/provider-webhooks/tbank"
 
 outbox:
   enabled: true

@@ -119,6 +119,12 @@ func (s *Server) ProviderWebhook(w http.ResponseWriter, r *http.Request, provide
 		writeError(w, http.StatusBadRequest, "webhook_error", "Некорректный webhook.")
 		return
 	}
+	if providerName == "tbank" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+		return
+	}
 	writeJSON(w, http.StatusOK, WebhookResponse{Status: "ok"})
 }
 

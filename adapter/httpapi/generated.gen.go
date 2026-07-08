@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
@@ -112,11 +113,18 @@ type CreatePaymentParams struct {
 // ProviderWebhookJSONBody defines parameters for ProviderWebhook.
 type ProviderWebhookJSONBody map[string]interface{}
 
+// ProviderWebhookFormdataBody defines parameters for ProviderWebhook.
+type ProviderWebhookFormdataBody struct {
+}
+
 // CreatePaymentJSONRequestBody defines body for CreatePayment for application/json ContentType.
 type CreatePaymentJSONRequestBody = CreatePaymentRequest
 
 // ProviderWebhookJSONRequestBody defines body for ProviderWebhook for application/json ContentType.
 type ProviderWebhookJSONRequestBody ProviderWebhookJSONBody
+
+// ProviderWebhookFormdataRequestBody defines body for ProviderWebhook for application/x-www-form-urlencoded ContentType.
+type ProviderWebhookFormdataRequestBody ProviderWebhookFormdataBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -602,7 +610,8 @@ func (response GetPayment404JSONResponse) VisitGetPaymentResponse(w http.Respons
 
 type ProviderWebhookRequestObject struct {
 	ProviderName string `json:"provider_name"`
-	Body         *ProviderWebhookJSONRequestBody
+	JSONBody     *ProviderWebhookJSONRequestBody
+	FormdataBody *ProviderWebhookFormdataRequestBody
 }
 
 type ProviderWebhookResponseObject interface {
@@ -770,13 +779,28 @@ func (sh *strictHandler) ProviderWebhook(w http.ResponseWriter, r *http.Request,
 	var request ProviderWebhookRequestObject
 
 	request.ProviderName = providerName
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 
-	var body ProviderWebhookJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
+		var body ProviderWebhookJSONRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+		request.JSONBody = &body
+
 	}
-	request.Body = &body
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		if err := r.ParseForm(); err != nil {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode formdata: %w", err))
+			return
+		}
+		var body ProviderWebhookFormdataRequestBody
+		if err := runtime.BindForm(&body, r.Form, nil, nil); err != nil {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't bind formdata: %w", err))
+			return
+		}
+		request.FormdataBody = &body
+	}
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.ProviderWebhook(ctx, request.(ProviderWebhookRequestObject))

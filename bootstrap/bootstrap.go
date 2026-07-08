@@ -9,10 +9,12 @@ import (
 
 	"github.com/Seraf-seraf/payment/adapter/httpapi"
 	mockprovider "github.com/Seraf-seraf/payment/adapter/provider/mock"
+	tbankprovider "github.com/Seraf-seraf/payment/adapter/provider/tbank"
 	postgresstorage "github.com/Seraf-seraf/payment/adapter/storage/postgres"
 	"github.com/Seraf-seraf/payment/pkg/config"
 	"github.com/Seraf-seraf/payment/pkg/db"
 	"github.com/Seraf-seraf/payment/pkg/logger"
+	"github.com/Seraf-seraf/payment/ports"
 	merchantservice "github.com/Seraf-seraf/payment/service/merchant"
 	paymentservice "github.com/Seraf-seraf/payment/service/payment"
 	webhookservice "github.com/Seraf-seraf/payment/service/webhook"
@@ -34,7 +36,10 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	merchantRepository := postgresstorage.NewMerchantRepository(pool)
 	paymentRepository := postgresstorage.NewPaymentRepository(pool)
 	webhookRepository := postgresstorage.NewWebhookRepository(pool)
-	providers := NewProviderRegistry(mockprovider.New(cfg.Providers.Mock.WebhookSecret))
+	providers, err := buildProviderRegistry(cfg)
+	if err != nil {
+		return nil, err
+	}
 	merchantService := merchantservice.NewService(merchantRepository)
 	paymentService := paymentservice.NewService(paymentRepository, providers, func() time.Time {
 		return time.Now().UTC()
@@ -62,4 +67,27 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 		}
 		return err
 	}, nil
+}
+
+func buildProviderRegistry(cfg config.Config) (*ProviderRegistry, error) {
+	providers := make([]ports.PaymentProvider, 0, 2)
+	if cfg.Providers.Mock.Enabled {
+		providers = append(providers, mockprovider.New(cfg.Providers.Mock.WebhookSecret))
+	}
+	if cfg.Providers.TBank.Enabled {
+		provider, err := tbankprovider.New(tbankprovider.Options{
+			APIURL:          cfg.Providers.TBank.APIURL,
+			TerminalKey:     cfg.Providers.TBank.TerminalKey,
+			Password:        cfg.Providers.TBank.Password,
+			NotificationURL: cfg.Providers.TBank.NotificationURL,
+		})
+		if err != nil {
+			return nil, err
+		}
+		providers = append(providers, provider)
+	}
+	if len(providers) == 0 {
+		return nil, errors.New("at least one provider is required")
+	}
+	return NewProviderRegistry(providers...), nil
 }
