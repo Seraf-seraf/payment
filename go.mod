@@ -1,6 +1,6 @@
-module github.com/example/go-swagger-template
+module github.com/Seraf-seraf/payment
 
-go 1.24
+go 1.26
 
 require (
 	github.com/getkin/kin-openapi v0.132.0
