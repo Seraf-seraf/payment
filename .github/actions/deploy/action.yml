@@ -79,16 +79,17 @@ runs:
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
-        if [ ! -x "$(dirname "$BINARY_PATH")/configdsn" ]; then
+        if [ ! -f "$(dirname "$BINARY_PATH")/configdsn" ]; then
           echo "❌ Ошибка: бинарный файл configdsn не найден"
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
-        if [ ! -x "$(dirname "$BINARY_PATH")/goose" ]; then
+        if [ ! -f "$(dirname "$BINARY_PATH")/goose" ]; then
           echo "❌ Ошибка: бинарный файл goose не найден"
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
+        chmod +x "$BINARY_PATH" "$(dirname "$BINARY_PATH")/configdsn" "$(dirname "$BINARY_PATH")/goose"
 
         sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
         sshpass -e rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
