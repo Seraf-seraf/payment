@@ -41,7 +41,7 @@ runs:
       shell: bash
       run: |
         sudo apt-get update
-        sudo apt-get install -y sshpass
+        sudo apt-get install -y sshpass rsync
 
     - name: Prepare deploy files
       shell: bash
@@ -76,6 +76,7 @@ runs:
         CONFIG_PATH: ${{ inputs.config-path }}
       run: |
         ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
+        rsync_rsh="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $SSH_PORT"
         remote="$SSH_USER@$SSH_HOST"
 
         # Проверить, что бинарный файл существует
@@ -86,9 +87,9 @@ runs:
         fi
 
         sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
-        sshpass -e scp $ssh_opts "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
-        sshpass -e scp $ssh_opts "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
-        sshpass -e scp $ssh_opts "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
+        sshpass -e rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
+        sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
+        sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
 
     - name: Run migrations
       shell: bash
