@@ -70,7 +70,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ vars.ARTIFACT_NAME }}
-          path: ${{ vars.BUILD_DIR }}
+          path: ${{ vars.BUILD_DIR }}/${{ vars.APP_NAME }}
 
       - name: Deploy
         uses: ./.github/actions/deploy
