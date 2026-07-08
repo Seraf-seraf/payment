@@ -37,6 +37,12 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Install sshpass
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y sshpass
+
     - name: Prepare deploy files
       shell: bash
       env:
