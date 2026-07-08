@@ -55,13 +55,7 @@ runs:
         printf '%s' "$CONFIG_CONTENT" > "$deploy_dir/config.yaml"
         chmod 600 "$deploy_dir/config.yaml"
 
-        tar -czf "$deploy_dir/migrations.tar.gz" \
-          Makefile \
-          go.mod \
-          go.sum \
-          cmd/configdsn \
-          pkg/config \
-          migrations
+        tar -czf "$deploy_dir/migrations.tar.gz" migrations
 
     - name: Copy binary config and migrations
       shell: bash
@@ -85,9 +79,21 @@ runs:
           ls -la "$(dirname "$BINARY_PATH")" || true
           exit 1
         fi
+        if [ ! -x "$(dirname "$BINARY_PATH")/configdsn" ]; then
+          echo "❌ Ошибка: бинарный файл configdsn не найден"
+          ls -la "$(dirname "$BINARY_PATH")" || true
+          exit 1
+        fi
+        if [ ! -x "$(dirname "$BINARY_PATH")/goose" ]; then
+          echo "❌ Ошибка: бинарный файл goose не найден"
+          ls -la "$(dirname "$BINARY_PATH")" || true
+          exit 1
+        fi
 
         sshpass -e ssh $ssh_opts "$remote" "mkdir -p '$REMOTE_DIR' '$(dirname "$CONFIG_PATH")' '$REMOTE_DIR/migrate'"
         sshpass -e rsync -az -e "$rsync_rsh" "$BINARY_PATH" "$remote:$REMOTE_DIR/$BINARY_NAME.new"
+        sshpass -e rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/configdsn" "$remote:$REMOTE_DIR/migrate/configdsn"
+        sshpass -e rsync -az -e "$rsync_rsh" "$(dirname "$BINARY_PATH")/goose" "$remote:$REMOTE_DIR/migrate/goose"
         sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/config.yaml" "$remote:$CONFIG_PATH"
         sshpass -e rsync -az -e "$rsync_rsh" "$RUNNER_TEMP/payment-service-deploy/migrations.tar.gz" "$remote:$REMOTE_DIR/migrations.tar.gz"
 
@@ -105,11 +111,11 @@ runs:
         remote="$SSH_USER@$SSH_HOST"
         sshpass -e ssh $ssh_opts "$remote" "
           set -eu
-          rm -rf '$REMOTE_DIR/migrate'
-          mkdir -p '$REMOTE_DIR/migrate'
+          rm -rf '$REMOTE_DIR/migrate/migrations'
           tar -xzf '$REMOTE_DIR/migrations.tar.gz' -C '$REMOTE_DIR/migrate'
-          cd '$REMOTE_DIR/migrate'
-          CONFIG_PATH='$CONFIG_PATH' make migrate-up
+          chmod +x '$REMOTE_DIR/migrate/configdsn' '$REMOTE_DIR/migrate/goose'
+          dsn=\"\$('$REMOTE_DIR/migrate/configdsn' -config '$CONFIG_PATH')\"
+          '$REMOTE_DIR/migrate/goose' -dir '$REMOTE_DIR/migrate/migrations' postgres \"\$dsn\" up
         "
 
     - name: Restart application

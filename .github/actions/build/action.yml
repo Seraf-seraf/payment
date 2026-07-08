@@ -13,24 +13,41 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Build binary
+    - name: Build binaries
       shell: bash
       env:
         APP_NAME: ${{ inputs.app-name }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
       run: |
         mkdir -p "$OUTPUT_DIR"
+
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
           -trimpath \
           -ldflags="-s -w" \
           -o "$OUTPUT_DIR/$APP_NAME" \
           ./cmd/api
 
-    - name: Check binary
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -trimpath \
+          -ldflags="-s -w" \
+          -o "$OUTPUT_DIR/configdsn" \
+          ./cmd/configdsn
+
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+          -trimpath \
+          -ldflags="-s -w" \
+          -o "$OUTPUT_DIR/goose" \
+          github.com/pressly/goose/v3/cmd/goose
+
+    - name: Check binaries
       shell: bash
       env:
         APP_NAME: ${{ inputs.app-name }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
       run: |
         test -x "$OUTPUT_DIR/$APP_NAME"
+        test -x "$OUTPUT_DIR/configdsn"
+        test -x "$OUTPUT_DIR/goose"
         file "$OUTPUT_DIR/$APP_NAME"
+        file "$OUTPUT_DIR/configdsn"
+        file "$OUTPUT_DIR/goose"

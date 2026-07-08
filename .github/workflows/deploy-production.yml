@@ -53,7 +53,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ vars.ARTIFACT_NAME }}
-          path: ${{ vars.BUILD_DIR }}/${{ vars.APP_NAME }}
+          path: ${{ vars.BUILD_DIR }}/
           if-no-files-found: error
           retention-days: 7
 
