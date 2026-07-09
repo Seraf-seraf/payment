@@ -111,9 +111,22 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params Cr
 }
 
 // GetPayment возвращает платеж по идентификатору.
-func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request, paymentID uuid.UUID) {
+func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request, paymentID uuid.UUID, params GetPaymentParams) {
+	merchant, ok := s.authenticate(w, r.Context(), CreatePaymentParams{
+		XAPIKey:    params.XAPIKey,
+		XTimestamp: params.XTimestamp,
+		XSignature: params.XSignature,
+	}, nil)
+	if !ok {
+		return
+	}
+
 	payment, err := s.payments.GetPayment(r.Context(), paymentID)
 	if err != nil {
+		writeError(w, http.StatusNotFound, "payment_not_found", "Платеж не найден.")
+		return
+	}
+	if payment.MerchantID != merchant.ID {
 		writeError(w, http.StatusNotFound, "payment_not_found", "Платеж не найден.")
 		return
 	}

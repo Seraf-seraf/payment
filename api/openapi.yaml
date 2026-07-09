@@ -53,6 +53,9 @@ paths:
       operationId: getPayment
       summary: Get payment
       parameters:
+        - $ref: '#/components/parameters/XAPIKey'
+        - $ref: '#/components/parameters/XTimestamp'
+        - $ref: '#/components/parameters/XSignature'
         - name: payment_id
           in: path
           required: true
@@ -67,6 +70,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaymentResponse'
         '404':
+          $ref: '#/components/responses/Error'
+        '401':
           $ref: '#/components/responses/Error'
   /provider-webhooks/{provider_name}:
     post:

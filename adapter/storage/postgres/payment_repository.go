@@ -23,6 +23,24 @@ type PaymentRepository struct {
 
 var _ ports.PaymentRepository = (*PaymentRepository)(nil)
 
+const paymentSelectProjection = `
+       id,
+       merchant_id,
+       provider_name,
+       COALESCE(provider_payment_id, ''),
+       merchant_order_id,
+       idempotency_key,
+       amount_minor,
+       currency,
+       status,
+       COALESCE(payment_url, ''),
+       metadata,
+       created_at,
+       updated_at,
+       paid_at,
+       canceled_at,
+       refunded_at`
+
 // NewPaymentRepository создает PostgreSQL-репозиторий платежей.
 func NewPaymentRepository(pool *pgxpool.Pool) *PaymentRepository {
 	return &PaymentRepository{db: pool}
@@ -85,23 +103,7 @@ INSERT INTO payments (
 
 // FindByID возвращает платеж по идентификатору.
 func (r *PaymentRepository) FindByID(ctx context.Context, id uuid.UUID) (paymentdomain.Payment, error) {
-	const query = `
-SELECT id,
-       merchant_id,
-       provider_name,
-       COALESCE(provider_payment_id, ''),
-       merchant_order_id,
-       idempotency_key,
-       amount_minor,
-       currency,
-       status,
-       COALESCE(payment_url, ''),
-       metadata,
-       created_at,
-       updated_at,
-       paid_at,
-       canceled_at,
-       refunded_at
+	const query = `SELECT ` + paymentSelectProjection + `
 FROM payments
 WHERE id = $1`
 	return r.queryPayment(ctx, query, id)
@@ -109,23 +111,7 @@ WHERE id = $1`
 
 // FindByMerchantAndIdempotencyKey возвращает платеж по мерчанту и идемпотентному ключу.
 func (r *PaymentRepository) FindByMerchantAndIdempotencyKey(ctx context.Context, merchantID uuid.UUID, key string) (paymentdomain.Payment, error) {
-	const query = `
-SELECT id,
-       merchant_id,
-       provider_name,
-       COALESCE(provider_payment_id, ''),
-       merchant_order_id,
-       idempotency_key,
-       amount_minor,
-       currency,
-       status,
-       COALESCE(payment_url, ''),
-       metadata,
-       created_at,
-       updated_at,
-       paid_at,
-       canceled_at,
-       refunded_at
+	const query = `SELECT ` + paymentSelectProjection + `
 FROM payments
 WHERE merchant_id = $1 AND idempotency_key = $2`
 	return r.queryPayment(ctx, query, merchantID, key)
@@ -133,23 +119,7 @@ WHERE merchant_id = $1 AND idempotency_key = $2`
 
 // FindByProviderPaymentID возвращает платеж по идентификатору провайдера.
 func (r *PaymentRepository) FindByProviderPaymentID(ctx context.Context, providerName, providerPaymentID string) (paymentdomain.Payment, error) {
-	const query = `
-SELECT id,
-       merchant_id,
-       provider_name,
-       COALESCE(provider_payment_id, ''),
-       merchant_order_id,
-       idempotency_key,
-       amount_minor,
-       currency,
-       status,
-       COALESCE(payment_url, ''),
-       metadata,
-       created_at,
-       updated_at,
-       paid_at,
-       canceled_at,
-       refunded_at
+	const query = `SELECT ` + paymentSelectProjection + `
 FROM payments
 WHERE provider_name = $1 AND provider_payment_id = $2`
 	return r.queryPayment(ctx, query, providerName, providerPaymentID)

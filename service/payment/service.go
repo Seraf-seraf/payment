@@ -31,22 +31,17 @@ type Service struct {
 	payments  ports.PaymentRepository
 	providers ports.ProviderRegistry
 	now       func() time.Time
-	tx        ports.TransactionManager
 }
 
 var _ ports.PaymentUseCase = (*Service)(nil)
 
 // NewService создает платежный сервис.
-func NewService(payments ports.PaymentRepository, providers ports.ProviderRegistry, now func() time.Time, tx ...ports.TransactionManager) *Service {
-	service := &Service{
+func NewService(payments ports.PaymentRepository, providers ports.ProviderRegistry, now func() time.Time) *Service {
+	return &Service{
 		payments:  payments,
 		providers: providers,
 		now:       now,
 	}
-	if len(tx) > 0 {
-		service.tx = tx[0]
-	}
-	return service
 }
 
 // CreatePayment создает платеж или возвращает результат существующего идемпотентного платежа.

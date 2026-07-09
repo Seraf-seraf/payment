@@ -295,6 +295,13 @@ type CreatePaymentParams struct {
 	XSignature     XSignature      `json:"X-Signature"`
 }
 
+// GetPaymentParams defines parameters for GetPayment.
+type GetPaymentParams struct {
+	XAPIKey    XAPIKey    `json:"X-API-Key"`
+	XTimestamp XTimestamp `json:"X-Timestamp"`
+	XSignature XSignature `json:"X-Signature"`
+}
+
 // ProviderWebhookJSONBody defines parameters for ProviderWebhook.
 type ProviderWebhookJSONBody map[string]interface{}
 
@@ -321,7 +328,7 @@ type ServerInterface interface {
 	CreatePayment(w http.ResponseWriter, r *http.Request, params CreatePaymentParams)
 	// Get payment
 	// (GET /payments/{payment_id})
-	GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID)
+	GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetPaymentParams)
 	// Provider webhook
 	// (POST /provider-webhooks/{provider_name})
 	ProviderWebhook(w http.ResponseWriter, r *http.Request, providerName string)
@@ -345,7 +352,7 @@ func (_ Unimplemented) CreatePayment(w http.ResponseWriter, r *http.Request, par
 
 // Get payment
 // (GET /payments/{payment_id})
-func (_ Unimplemented) GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID) {
+func (_ Unimplemented) GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetPaymentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -503,8 +510,82 @@ func (siw *ServerInterfaceWrapper) GetPayment(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPaymentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-API-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-API-Key")]; found {
+		var XAPIKey XAPIKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-API-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-API-Key", valueList[0], &XAPIKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-API-Key", Err: err})
+			return
+		}
+
+		params.XAPIKey = XAPIKey
+
+	} else {
+		err := fmt.Errorf("Header parameter X-API-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-API-Key", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Timestamp" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Timestamp")]; found {
+		var XTimestamp XTimestamp
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Timestamp", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Timestamp", valueList[0], &XTimestamp, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Timestamp", Err: err})
+			return
+		}
+
+		params.XTimestamp = XTimestamp
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Timestamp is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Timestamp", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Signature" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Signature")]; found {
+		var XSignature XSignature
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Signature", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Signature", valueList[0], &XSignature, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Signature", Err: err})
+			return
+		}
+
+		params.XSignature = XSignature
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Signature is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Signature", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetPayment(w, r, paymentId)
+		siw.Handler.GetPayment(w, r, paymentId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -759,6 +840,7 @@ func (response CreatePayment401JSONResponse) VisitCreatePaymentResponse(w http.R
 
 type GetPaymentRequestObject struct {
 	PaymentId openapi_types.UUID `json:"payment_id"`
+	Params    GetPaymentParams
 }
 
 type GetPaymentResponseObject interface {
@@ -779,7 +861,21 @@ func (response GetPayment200JSONResponse) VisitGetPaymentResponse(w http.Respons
 	return err
 }
 
-type GetPayment404JSONResponse struct{ ErrorJSONResponse }
+type GetPayment401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetPayment401JSONResponse) VisitGetPaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPayment404JSONResponse ErrorResponse
 
 func (response GetPayment404JSONResponse) VisitGetPaymentResponse(w http.ResponseWriter) error {
 
@@ -945,10 +1041,11 @@ func (sh *strictHandler) CreatePayment(w http.ResponseWriter, r *http.Request, p
 }
 
 // GetPayment operation middleware
-func (sh *strictHandler) GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID) {
+func (sh *strictHandler) GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetPaymentParams) {
 	var request GetPaymentRequestObject
 
 	request.PaymentId = paymentId
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.GetPayment(ctx, request.(GetPaymentRequestObject))

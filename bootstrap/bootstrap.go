@@ -48,7 +48,7 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	merchantService := merchantservice.NewService(merchantRepository)
 	paymentService := paymentservice.NewService(paymentRepository, providers, func() time.Time {
 		return time.Now().UTC()
-	}, txManager)
+	})
 	webhookService := webhookservice.NewService(providers, paymentRepository, webhookRepository, outboxRepository, txManager)
 
 	var server *http.Server
