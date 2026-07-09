@@ -19,7 +19,7 @@ import (
 func TestCreatePaymentRejectsInvalidSignature(t *testing.T) {
 	t.Parallel()
 
-	server := NewServer(nil, fixedMerchantAuth{}, noopPayments{}, nil, 5*time.Minute)
+	server := NewServer(nil, fixedMerchantAuth{}, &noopPayments{}, nil, 5*time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments", body())
 	rec := httptest.NewRecorder()
 
@@ -37,7 +37,7 @@ func TestCreatePaymentRejectsInvalidSignature(t *testing.T) {
 func TestCreatePaymentRejectsOldTimestamp(t *testing.T) {
 	t.Parallel()
 
-	server := NewServer(nil, fixedMerchantAuth{}, noopPayments{}, nil, 5*time.Minute)
+	server := NewServer(nil, fixedMerchantAuth{}, &noopPayments{}, nil, 5*time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments", body())
 	rec := httptest.NewRecorder()
 	timestamp := time.Now().Add(-10 * time.Minute).Unix()
@@ -57,7 +57,7 @@ func TestCreatePaymentRejectsOldTimestamp(t *testing.T) {
 func TestCreatePaymentAcceptsValidSignature(t *testing.T) {
 	t.Parallel()
 
-	payments := noopPayments{}
+	payments := &noopPayments{}
 	server := NewServer(nil, fixedMerchantAuth{}, payments, nil, 5*time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/payments", body())
 	rec := httptest.NewRecorder()
@@ -73,9 +73,19 @@ func TestCreatePaymentAcceptsValidSignature(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
+	if payments.request.Receipt.Taxation != "osn" {
+		t.Fatalf("receipt taxation = %q", payments.request.Receipt.Taxation)
+	}
+	if len(payments.request.Receipt.Items) != 1 {
+		t.Fatalf("receipt items = %+v", payments.request.Receipt.Items)
+	}
+	item := payments.request.Receipt.Items[0]
+	if item.Name != "Test service" || item.AmountMinor != 1000 || item.PaymentMethod != "full_payment" || item.PaymentObject != "service" || item.Tax != "none" {
+		t.Fatalf("receipt item = %+v", item)
+	}
 }
 
-const bodyString = `{"order_id":"order-1","amount_minor":1000,"currency":"RUB"}`
+const bodyString = `{"order_id":"order-1","amount_minor":1000,"currency":"RUB","receipt":{"email":"customer@example.com","taxation":"osn","items":[{"name":"Test service","price_minor":1000,"quantity":1,"amount_minor":1000,"payment_method":"full_payment","payment_object":"service","tax":"none"}]}}`
 
 func body() *strings.Reader {
 	return strings.NewReader(bodyString)
@@ -91,9 +101,12 @@ func (fixedMerchantAuth) AuthenticateAPIKey(context.Context, string) (merchantdo
 	return merchantdomain.Merchant{ID: uuid.New(), SharedSecret: "secret", ProviderName: "mock", IsActive: true}, nil
 }
 
-type noopPayments struct{}
+type noopPayments struct {
+	request ports.CreatePaymentRequest
+}
 
-func (noopPayments) CreatePayment(context.Context, ports.CreatePaymentRequest) (ports.CreatePaymentResult, error) {
+func (p *noopPayments) CreatePayment(_ context.Context, req ports.CreatePaymentRequest) (ports.CreatePaymentResult, error) {
+	p.request = req
 	return ports.CreatePaymentResult{
 		Created: true,
 		Payment: paymentdomain.Payment{
@@ -107,6 +120,6 @@ func (noopPayments) CreatePayment(context.Context, ports.CreatePaymentRequest) (
 	}, nil
 }
 
-func (noopPayments) GetPayment(context.Context, uuid.UUID) (paymentdomain.Payment, error) {
+func (*noopPayments) GetPayment(context.Context, uuid.UUID) (paymentdomain.Payment, error) {
 	return paymentdomain.Payment{}, nil
 }

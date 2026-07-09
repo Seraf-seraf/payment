@@ -95,6 +95,9 @@ func (p *Provider) CreatePayment(ctx context.Context, req providerdomain.CreateP
 	if req.CustomerEmail != "" {
 		payload["DATA"] = map[string]string{"Email": req.CustomerEmail}
 	}
+	if len(req.Receipt.Items) > 0 {
+		payload["Receipt"] = tbankReceipt(req.Receipt)
+	}
 	payload["Token"] = makeToken(payload, p.password)
 
 	body, err := json.Marshal(payload)
@@ -186,6 +189,45 @@ type initResponse struct {
 	PaymentURL string `json:"PaymentURL"`
 }
 
+type receipt struct {
+	Email    string        `json:"Email,omitempty"`
+	Phone    string        `json:"Phone,omitempty"`
+	Taxation string        `json:"Taxation"`
+	Items    []receiptItem `json:"Items"`
+}
+
+type receiptItem struct {
+	Name          string  `json:"Name"`
+	Price         int64   `json:"Price"`
+	Quantity      float64 `json:"Quantity"`
+	Amount        int64   `json:"Amount"`
+	PaymentMethod string  `json:"PaymentMethod,omitempty"`
+	PaymentObject string  `json:"PaymentObject,omitempty"`
+	Tax           string  `json:"Tax"`
+}
+
+func tbankReceipt(value providerdomain.Receipt) receipt {
+	items := make([]receiptItem, 0, len(value.Items))
+	for _, item := range value.Items {
+		items = append(items, receiptItem{
+			Name:          trimReceiptItemName(item.Name),
+			Price:         item.PriceMinor,
+			Quantity:      item.Quantity,
+			Amount:        item.AmountMinor,
+			PaymentMethod: item.PaymentMethod,
+			PaymentObject: item.PaymentObject,
+			Tax:           item.Tax,
+		})
+	}
+
+	return receipt{
+		Email:    value.Email,
+		Phone:    value.Phone,
+		Taxation: value.Taxation,
+		Items:    items,
+	}
+}
+
 func makeToken(values map[string]any, password string) string {
 	tokenValues := make(map[string]string, len(values)+1)
 	for key, value := range values {
@@ -259,9 +301,17 @@ func trimDescription(value string) string {
 	return string(runes[:140])
 }
 
+func trimReceiptItemName(value string) string {
+	if len([]rune(value)) <= 128 {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:128])
+}
+
 func isNested(value any) bool {
 	switch value.(type) {
-	case map[string]any, map[string]string, []any, []map[string]any:
+	case map[string]any, map[string]string, []any, []map[string]any, receipt, receiptItem, []receiptItem:
 		return true
 	default:
 		return false

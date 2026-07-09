@@ -11,6 +11,7 @@ type CreatePaymentRequest struct {
 	Description     string
 	PaymentMethod   string
 	CustomerEmail   string
+	Receipt         Receipt
 	IdempotencyKey  string
 	MerchantID      string
 	MerchantSuccess string
@@ -21,6 +22,25 @@ type CreatePaymentRequest struct {
 type CreatePaymentResult struct {
 	ProviderPaymentID string
 	PaymentURL        string
+}
+
+// Receipt содержит данные онлайн-чека для провайдера.
+type Receipt struct {
+	Email    string
+	Phone    string
+	Taxation string
+	Items    []ReceiptItem
+}
+
+// ReceiptItem содержит товарную позицию онлайн-чека.
+type ReceiptItem struct {
+	Name          string
+	PriceMinor    int64
+	Quantity      float64
+	AmountMinor   int64
+	PaymentMethod string
+	PaymentObject string
+	Tax           string
 }
 
 // WebhookEvent представляет нормализованное событие webhook от платежного провайдера.

@@ -128,7 +128,7 @@ make generate
 Пример:
 
 ```bash
-body='{"order_id":"order-1","amount_minor":10000,"currency":"RUB","description":"Test payment"}'
+body='{"order_id":"order-1","amount_minor":10000,"currency":"RUB","description":"Test payment","receipt":{"email":"customer@example.com","taxation":"osn","items":[{"name":"Test payment","price_minor":10000,"quantity":1,"amount_minor":10000,"payment_method":"full_payment","payment_object":"service","tax":"none"}]}}'
 ts="$(date +%s)"
 signature="$(printf '%s.%s' "$ts" "$body" | openssl dgst -sha256 -hmac "$SHARED_SECRET" -hex | awk '{print $2}')"
 

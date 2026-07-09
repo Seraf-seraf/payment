@@ -43,6 +43,159 @@ func (e PaymentStatus) Valid() bool {
 	}
 }
 
+// Defines values for ReceiptPaymentMethod.
+const (
+	Advance        ReceiptPaymentMethod = "advance"
+	Credit         ReceiptPaymentMethod = "credit"
+	CreditPayment  ReceiptPaymentMethod = "credit_payment"
+	FullPayment    ReceiptPaymentMethod = "full_payment"
+	FullPrepayment ReceiptPaymentMethod = "full_prepayment"
+	PartialPayment ReceiptPaymentMethod = "partial_payment"
+	Prepayment     ReceiptPaymentMethod = "prepayment"
+)
+
+// Valid indicates whether the value is a known member of the ReceiptPaymentMethod enum.
+func (e ReceiptPaymentMethod) Valid() bool {
+	switch e {
+	case Advance:
+		return true
+	case Credit:
+		return true
+	case CreditPayment:
+		return true
+	case FullPayment:
+		return true
+	case FullPrepayment:
+		return true
+	case PartialPayment:
+		return true
+	case Prepayment:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReceiptPaymentObject.
+const (
+	AgentCommission      ReceiptPaymentObject = "agent_commission"
+	Another              ReceiptPaymentObject = "another"
+	Commodity            ReceiptPaymentObject = "commodity"
+	Composite            ReceiptPaymentObject = "composite"
+	Excise               ReceiptPaymentObject = "excise"
+	GamblingBet          ReceiptPaymentObject = "gambling_bet"
+	GamblingPrize        ReceiptPaymentObject = "gambling_prize"
+	IntellectualActivity ReceiptPaymentObject = "intellectual_activity"
+	Job                  ReceiptPaymentObject = "job"
+	Lottery              ReceiptPaymentObject = "lottery"
+	LotteryPrize         ReceiptPaymentObject = "lottery_prize"
+	Payment              ReceiptPaymentObject = "payment"
+	Service              ReceiptPaymentObject = "service"
+)
+
+// Valid indicates whether the value is a known member of the ReceiptPaymentObject enum.
+func (e ReceiptPaymentObject) Valid() bool {
+	switch e {
+	case AgentCommission:
+		return true
+	case Another:
+		return true
+	case Commodity:
+		return true
+	case Composite:
+		return true
+	case Excise:
+		return true
+	case GamblingBet:
+		return true
+	case GamblingPrize:
+		return true
+	case IntellectualActivity:
+		return true
+	case Job:
+		return true
+	case Lottery:
+		return true
+	case LotteryPrize:
+		return true
+	case Payment:
+		return true
+	case Service:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReceiptTax.
+const (
+	None   ReceiptTax = "none"
+	Vat0   ReceiptTax = "vat0"
+	Vat10  ReceiptTax = "vat10"
+	Vat105 ReceiptTax = "vat105"
+	Vat107 ReceiptTax = "vat107"
+	Vat110 ReceiptTax = "vat110"
+	Vat122 ReceiptTax = "vat122"
+	Vat22  ReceiptTax = "vat22"
+	Vat5   ReceiptTax = "vat5"
+	Vat7   ReceiptTax = "vat7"
+)
+
+// Valid indicates whether the value is a known member of the ReceiptTax enum.
+func (e ReceiptTax) Valid() bool {
+	switch e {
+	case None:
+		return true
+	case Vat0:
+		return true
+	case Vat10:
+		return true
+	case Vat105:
+		return true
+	case Vat107:
+		return true
+	case Vat110:
+		return true
+	case Vat122:
+		return true
+	case Vat22:
+		return true
+	case Vat5:
+		return true
+	case Vat7:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ReceiptTaxation.
+const (
+	Esn              ReceiptTaxation = "esn"
+	Osn              ReceiptTaxation = "osn"
+	Patent           ReceiptTaxation = "patent"
+	UsnIncome        ReceiptTaxation = "usn_income"
+	UsnIncomeOutcome ReceiptTaxation = "usn_income_outcome"
+)
+
+// Valid indicates whether the value is a known member of the ReceiptTaxation enum.
+func (e ReceiptTaxation) Valid() bool {
+	switch e {
+	case Esn:
+		return true
+	case Osn:
+		return true
+	case Patent:
+		return true
+	case UsnIncome:
+		return true
+	case UsnIncomeOutcome:
+		return true
+	default:
+		return false
+	}
+}
+
 // CreatePaymentRequest defines model for CreatePaymentRequest.
 type CreatePaymentRequest struct {
 	AmountMinor   int64     `json:"amount_minor"`
@@ -51,6 +204,7 @@ type CreatePaymentRequest struct {
 	Description   *string   `json:"description,omitempty"`
 	OrderId       string    `json:"order_id"`
 	PaymentMethod *string   `json:"payment_method,omitempty"`
+	Receipt       Receipt   `json:"receipt"`
 }
 
 // Customer defines model for Customer.
@@ -81,6 +235,37 @@ type PaymentResponse struct {
 
 // PaymentStatus defines model for PaymentStatus.
 type PaymentStatus string
+
+// Receipt defines model for Receipt.
+type Receipt struct {
+	Email    *openapi_types.Email `json:"email,omitempty"`
+	Items    []ReceiptItem        `json:"items"`
+	Phone    *string              `json:"phone,omitempty"`
+	Taxation ReceiptTaxation      `json:"taxation"`
+}
+
+// ReceiptItem defines model for ReceiptItem.
+type ReceiptItem struct {
+	AmountMinor   int64                 `json:"amount_minor"`
+	Name          string                `json:"name"`
+	PaymentMethod *ReceiptPaymentMethod `json:"payment_method,omitempty"`
+	PaymentObject *ReceiptPaymentObject `json:"payment_object,omitempty"`
+	PriceMinor    int64                 `json:"price_minor"`
+	Quantity      float64               `json:"quantity"`
+	Tax           ReceiptTax            `json:"tax"`
+}
+
+// ReceiptPaymentMethod defines model for ReceiptPaymentMethod.
+type ReceiptPaymentMethod string
+
+// ReceiptPaymentObject defines model for ReceiptPaymentObject.
+type ReceiptPaymentObject string
+
+// ReceiptTax defines model for ReceiptTax.
+type ReceiptTax string
+
+// ReceiptTaxation defines model for ReceiptTaxation.
+type ReceiptTaxation string
 
 // WebhookResponse defines model for WebhookResponse.
 type WebhookResponse struct {

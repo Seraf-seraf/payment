@@ -28,6 +28,7 @@ type CreatePaymentRequest struct {
 	Description    string
 	PaymentMethod  string
 	CustomerEmail  string
+	Receipt        providerdomain.Receipt
 	IdempotencyKey string
 }
 

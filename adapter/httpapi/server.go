@@ -14,6 +14,7 @@ import (
 
 	merchantdomain "github.com/Seraf-seraf/payment/domain/merchant"
 	paymentdomain "github.com/Seraf-seraf/payment/domain/payment"
+	providerdomain "github.com/Seraf-seraf/payment/domain/provider"
 	"github.com/Seraf-seraf/payment/pkg/crypto"
 	"github.com/Seraf-seraf/payment/ports"
 	"github.com/google/uuid"
@@ -69,8 +70,8 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params Cr
 		return
 	}
 
-	description := value(body.Description)
-	paymentMethod := value(body.PaymentMethod)
+	description := stringValue(body.Description)
+	paymentMethod := stringValue(body.PaymentMethod)
 	customerEmail := ""
 	if body.Customer != nil && body.Customer.Email != nil {
 		customerEmail = string(*body.Customer.Email)
@@ -78,6 +79,11 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params Cr
 	idempotencyKey := ""
 	if params.IdempotencyKey != nil {
 		idempotencyKey = *params.IdempotencyKey
+	}
+	receipt := providerReceipt(body.Receipt)
+	if err := validateReceipt(receipt, body.AmountMinor); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Некорректные данные чека.")
+		return
 	}
 
 	result, err := s.payments.CreatePayment(r.Context(), ports.CreatePaymentRequest{
@@ -88,6 +94,7 @@ func (s *Server) CreatePayment(w http.ResponseWriter, r *http.Request, params Cr
 		Description:    description,
 		PaymentMethod:  paymentMethod,
 		CustomerEmail:  customerEmail,
+		Receipt:        receipt,
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
@@ -197,9 +204,54 @@ func paymentResponse(payment paymentdomain.Payment) PaymentResponse {
 	}
 }
 
-func value(value *string) string {
+func providerReceipt(receipt Receipt) providerdomain.Receipt {
+	items := make([]providerdomain.ReceiptItem, 0, len(receipt.Items))
+	for _, item := range receipt.Items {
+		items = append(items, providerdomain.ReceiptItem{
+			Name:          item.Name,
+			PriceMinor:    item.PriceMinor,
+			Quantity:      item.Quantity,
+			AmountMinor:   item.AmountMinor,
+			PaymentMethod: stringValue(item.PaymentMethod),
+			PaymentObject: stringValue(item.PaymentObject),
+			Tax:           string(item.Tax),
+		})
+	}
+
+	return providerdomain.Receipt{
+		Email:    stringValue(receipt.Email),
+		Phone:    stringValue(receipt.Phone),
+		Taxation: string(receipt.Taxation),
+		Items:    items,
+	}
+}
+
+func validateReceipt(receipt providerdomain.Receipt, amountMinor int64) error {
+	if receipt.Email == "" && receipt.Phone == "" {
+		return errors.New("receipt email or phone is required")
+	}
+	if receipt.Taxation == "" {
+		return errors.New("receipt taxation is required")
+	}
+	if len(receipt.Items) == 0 {
+		return errors.New("receipt items are required")
+	}
+	var itemsAmount int64
+	for _, item := range receipt.Items {
+		if item.AmountMinor <= 0 || item.PriceMinor <= 0 || item.Quantity <= 0 || item.Name == "" || item.Tax == "" {
+			return errors.New("invalid receipt item")
+		}
+		itemsAmount += item.AmountMinor
+	}
+	if itemsAmount != amountMinor {
+		return errors.New("receipt amount mismatch")
+	}
+	return nil
+}
+
+func stringValue[T ~string](value *T) string {
 	if value == nil {
 		return ""
 	}
-	return *value
+	return string(*value)
 }

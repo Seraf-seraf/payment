@@ -104,6 +104,7 @@ func (s *Service) CreatePayment(ctx context.Context, req ports.CreatePaymentRequ
 		Description:     req.Description,
 		PaymentMethod:   req.PaymentMethod,
 		CustomerEmail:   req.CustomerEmail,
+		Receipt:         req.Receipt,
 		IdempotencyKey:  idempotencyKey,
 		MerchantID:      req.Merchant.ID.String(),
 		MerchantSuccess: req.Merchant.SuccessURL,
