@@ -93,6 +93,10 @@ paths:
         '200':
           description: Webhook accepted
           content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
             application/json:
               schema:
                 $ref: '#/components/schemas/WebhookResponse'

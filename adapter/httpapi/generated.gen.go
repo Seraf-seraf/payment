@@ -817,6 +817,17 @@ func (response ProviderWebhook200JSONResponse) VisitProviderWebhookResponse(w ht
 	return err
 }
 
+type ProviderWebhook200TextResponse string
+
+func (response ProviderWebhook200TextResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(200)
+
+	_, err := w.Write([]byte(response))
+	return err
+}
+
 type ProviderWebhook400JSONResponse struct{ ErrorJSONResponse }
 
 func (response ProviderWebhook400JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
