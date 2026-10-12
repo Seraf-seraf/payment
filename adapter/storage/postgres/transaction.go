@@ -42,9 +42,12 @@ func (m *TransactionManager) WithinTx(ctx context.Context, fn func(context.Conte
 	}()
 
 	repos := ports.Repositories{
-		Payments:      newPaymentRepository(tx),
-		WebhookEvents: newWebhookRepository(tx),
-		Outbox:        newOutboxRepository(tx),
+		Payments:        newPaymentRepository(tx),
+		Invoices:        newInvoiceRepository(tx),
+		InvoiceCommands: newInvoiceCommandRepository(tx),
+		InvoiceInbox:    newInvoiceInboxRepository(tx),
+		WebhookEvents:   newWebhookRepository(tx),
+		Outbox:          newOutboxRepository(tx),
 	}
 	if err := fn(ctx, repos); err != nil {
 		return err

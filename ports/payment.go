@@ -61,9 +61,12 @@ type OutboxRepository interface {
 
 // Repositories объединяет tx-scoped репозитории, доступные внутри транзакции.
 type Repositories struct {
-	Payments      PaymentRepository
-	WebhookEvents WebhookEventRepository
-	Outbox        OutboxRepository
+	Payments        PaymentRepository
+	Invoices        InvoiceRepository
+	InvoiceCommands InvoiceCommandRepository
+	InvoiceInbox    InvoiceInboxRepository
+	WebhookEvents   WebhookEventRepository
+	Outbox          OutboxRepository
 }
 
 // TransactionManager выполняет набор операций внутри транзакции БД.
