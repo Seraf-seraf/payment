@@ -2,9 +2,6 @@ package invoice
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
-	"errors"
 	d "github.com/Seraf-seraf/payment/domain/invoice"
 	payment "github.com/Seraf-seraf/payment/domain/payment"
 	"github.com/Seraf-seraf/payment/ports"
@@ -23,6 +20,12 @@ func (w *Worker) applyNotification(ctx context.Context, c ports.InvoiceCommand) 
 		}
 		now := w.now().UTC()
 		if inbox.State == "processed" || inbox.State == "review" {
+			return r.InvoiceCommands.Finish(ctx, c, "completed", now, "", now)
+		}
+		if len(inbox.Observation.References) > 1 {
+			if err := r.InvoiceInbox.SetState(ctx, inbox.ID, "review", "ambiguous_reference", nil, now); err != nil {
+				return err
+			}
 			return r.InvoiceCommands.Finish(ctx, c, "completed", now, "", now)
 		}
 		ids, err := r.Invoices.Match(ctx, inbox.ConnectionID, inbox.Observation.ExternalInvoiceID, inbox.Observation.Reference)
@@ -69,100 +72,34 @@ func (w *Worker) applyNotification(ctx context.Context, c ports.InvoiceCommand) 
 
 // Financial facts from inbox and read-back share this application and deduplication path.
 func applyEvidence(ctx context.Context, r ports.Repositories, v *d.Record, p *payment.Payment, inbox d.Inbox, now time.Time) error {
-	o := inbox.Observation
-	changed := false
-	eligible := true
-	reviewCode := ""
-	reject := func(reason string) { eligible = false; reviewCode = reason; changed = addReview(v, reason) || changed }
-	if o.Kind == "financial_correction" {
-		reject("financial_correction")
+	result, err := d.PrepareSettlement(*v, string(p.Status), inbox.Observation, now)
+	if err != nil {
+		return err
 	}
-	if o.Kind != "settlement" || !o.FinalIncoming || o.EvidenceMode != v.EvidenceMode || o.AmountMinor < 1 || o.AmountMinor > d.MaxAmountMinor || o.RecipientAccount == "" || v.Connection.Beneficiary.Account == "" || o.RecipientAccount != v.Connection.Beneficiary.Account {
-		if reviewCode == "" {
-			reject("ambiguous_reference")
-		}
-	}
-	if o.Currency != v.Request.Currency {
-		reject("currency_mismatch")
-	}
-	if o.PayerINN != v.Request.Payer.INN {
-		reject("payer_mismatch")
-	}
-	if v.EvidenceMode == "invoice_confirmation" {
-		if o.ExternalInvoiceID == "" || o.ExternalInvoiceID != v.ExternalInvoiceID {
-			reject("ambiguous_reference")
-			o.FinancialKey = ""
-		} else {
-			o.FinancialKey = "invoice:" + o.ExternalInvoiceID + ":final_settlement"
-		}
-	} else if o.FinancialKey == "" || !o.CanonicalFinancialKey {
-		reject("ambiguous_reference")
-		o.FinancialKey = ""
-	}
-	// Invalid or correction observations remain durable incidents, never invented positive evidence.
-	newFact := false
-	if o.Kind == "settlement" && o.FinalIncoming && o.EvidenceMode == v.EvidenceMode && o.AmountMinor > 0 && o.AmountMinor <= d.MaxAmountMinor && o.FinancialKey != "" && len(o.Currency) == 3 {
-		data, err := json.Marshal(struct {
-			Kind               string
-			FinancialKey       string
-			EvidenceMode       string
-			AmountMinor        int64
-			Currency           string
-			RecipientAccount   string
-			PayerINN           string
-			FinalIncoming      bool
-			ProviderOccurredAt *time.Time
-		}{o.Kind, o.FinancialKey, o.EvidenceMode, o.AmountMinor, o.Currency, o.RecipientAccount, o.PayerINN, o.FinalIncoming, o.ProviderOccurredAt})
+	inserted, conflict := false, false
+	if result.Evidence != nil {
+		evidence := *result.Evidence
+		evidence.ID = uuid.New()
+		evidence.VerificationKind = inbox.VerificationKind
+		inserted, conflict, err = r.Invoices.RecordEvidence(ctx, evidence)
 		if err != nil {
 			return err
 		}
-		hash := sha256.Sum256(data)
-		inserted, conflict, err := r.Invoices.RecordEvidence(ctx, d.Evidence{ID: uuid.New(), PaymentID: v.PaymentID, ConnectionID: v.Connection.ID, FinancialKey: o.FinancialKey, NormalizedHash: hash, EvidenceMode: v.EvidenceMode, AmountMinor: o.AmountMinor, Currency: o.Currency, Eligible: eligible, RecordedAt: now, ProviderOccurredAt: o.ProviderOccurredAt, VerificationKind: inbox.VerificationKind})
-		if err != nil {
-			return err
-		}
-		if conflict {
-			reject("operation_changed")
-		} else if inserted {
-			newFact = true
-			if eligible {
-				if v.CreditedMinor > d.MaxAmountMinor-o.AmountMinor {
-					return errors.New("invoice credited amount overflow")
-				}
-				// invoice_confirmation has a single final evidence, guarded by its partial UNIQUE.
-				v.CreditedMinor += o.AmountMinor
-			}
-		}
 	}
-	if newFact || changed {
-		switch {
-		case v.CreditedMinor == 0:
-			v.FundingState = "none"
-		case v.CreditedMinor < v.Request.AmountMinor:
-			v.FundingState = "partial"
-		case v.CreditedMinor == v.Request.AmountMinor:
-			v.FundingState = "paid"
-		default:
-			v.FundingState = "overpaid"
-			changed = addReview(v, "overpaid") || changed
-		}
-		if v.CreditedMinor >= v.Request.AmountMinor {
-			if !now.Before(v.Request.AcceptUntil) || p.Status == payment.StatusCanceled || p.Status == payment.StatusFailed {
-				changed = addReview(v, "acceptance_deadline_elapsed") || changed
-			}
-			p.Status = payment.StatusSucceeded
-			if v.ConfirmationRecordedAt == nil {
-				v.ConfirmationRecordedAt = &now
-				v.PaymentConfirmedAt = o.ProviderOccurredAt
-			}
-		}
-		if err := persistProjection(ctx, r, v, p, "receipt_recorded", now); err != nil {
+	result, err = d.CompleteSettlement(result, inserted, conflict, now)
+	if err != nil {
+		return err
+	}
+	if result.Changed {
+		*v = result.Record
+		p.Status = payment.Status(result.Status)
+		if err := saveProjection(ctx, r, v, p, "receipt_recorded", now); err != nil {
 			return err
 		}
 	}
 	state := "processed"
-	if !eligible || reviewCode != "" {
+	if result.ReviewCode != "" {
 		state = "review"
 	}
-	return r.InvoiceInbox.SetState(ctx, inbox.ID, state, reviewCode, nil, now)
+	return r.InvoiceInbox.SetState(ctx, inbox.ID, state, result.ReviewCode, nil, now)
 }

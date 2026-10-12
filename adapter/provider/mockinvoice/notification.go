@@ -85,13 +85,14 @@ func (dec *NotificationDecoder) VerifyAndDecode(envelope ports.InvoiceNotificati
 	if body.Kind != "status_hint" && body.Kind != "settlement" && body.Kind != "financial_correction" || len(body.EventID) > 200 || len(body.ExternalInvoiceID) > 200 || len(body.OperationID) > 200 || body.OperationChannel != "" && body.OperationChannel != "webhook" && body.OperationChannel != "statement" {
 		return ports.VerifiedInvoiceNotification{}, ports.ErrInvoiceNotificationMalformed
 	}
-	if body.Reference != "" && !validReference(body.Reference) {
+	reference, references, ok := normalizeReference(body.Reference)
+	if !ok {
 		return ports.VerifiedInvoiceNotification{}, ports.ErrInvoiceNotificationMalformed
 	}
 	if body.Kind == "settlement" && (body.AmountMinor < 1 || body.AmountMinor > d.MaxAmountMinor || !validCurrency(body.Currency) || body.RecipientAccount == "" || body.PayerINN == "") {
 		return ports.VerifiedInvoiceNotification{}, ports.ErrInvoiceNotificationMalformed
 	}
-	o := d.Observation{Kind: body.Kind, ExternalInvoiceID: body.ExternalInvoiceID, Reference: body.Reference, ExternalOperationID: body.OperationID, OperationChannel: body.OperationChannel, EvidenceMode: dec.mode, AmountMinor: body.AmountMinor, Currency: body.Currency, RecipientAccount: body.RecipientAccount, PayerINN: body.PayerINN, FinalIncoming: body.FinalIncoming, ProviderOccurredAt: body.ProviderOccurredAt}
+	o := d.Observation{Kind: body.Kind, ExternalInvoiceID: body.ExternalInvoiceID, Reference: reference, References: references, ExternalOperationID: body.OperationID, OperationChannel: body.OperationChannel, EvidenceMode: dec.mode, AmountMinor: body.AmountMinor, Currency: body.Currency, RecipientAccount: body.RecipientAccount, PayerINN: body.PayerINN, FinalIncoming: body.FinalIncoming, ProviderOccurredAt: body.ProviderOccurredAt}
 	if dec.mode == "bank_credits" && body.OperationID != "" {
 		canonical := ""
 		switch dec.strategy {
@@ -139,6 +140,35 @@ func validReference(s string) bool {
 		}
 	}
 	return true
+}
+
+// normalizeReference preserves the exact single-reference contract. Multiple
+// references are accepted only when every whitespace-delimited token is valid;
+// distinct references are retained in normalized form for review.
+func normalizeReference(s string) (string, []string, bool) {
+	if s == "" || validReference(s) {
+		return s, nil, true
+	}
+	tokens := strings.Fields(s)
+	if len(tokens) < 2 {
+		return "", nil, false
+	}
+	unique := make([]string, 0, len(tokens))
+	seen := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		if !validReference(token) {
+			return "", nil, false
+		}
+		if _, exists := seen[token]; exists {
+			continue
+		}
+		seen[token] = struct{}{}
+		unique = append(unique, token)
+	}
+	if len(unique) == 1 {
+		return unique[0], nil, true
+	}
+	return "", unique, true
 }
 func validCurrency(s string) bool {
 	if len(s) != 3 {

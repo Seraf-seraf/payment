@@ -129,6 +129,11 @@ const invoiceProjection = `payment_id,merchant_id,request_hash,request_snapshot,
 func (r *InvoiceRepository) Lock(ctx context.Context, id uuid.UUID) (invoicedomain.Record, error) {
 	return r.scanRecord(ctx, `SELECT `+invoiceProjection+` FROM invoice_payments WHERE payment_id=$1 FOR UPDATE`, id)
 }
+
+func (r *InvoiceRepository) LockByMerchantAndPaymentID(ctx context.Context, merchantID, paymentID uuid.UUID) (invoicedomain.Record, error) {
+	return r.scanRecord(ctx, `SELECT `+invoiceProjection+` FROM invoice_payments WHERE merchant_id=$1 AND payment_id=$2 FOR UPDATE`, merchantID, paymentID)
+}
+
 func (r *InvoiceRepository) Save(ctx context.Context, v invoicedomain.Record) error {
 	var artifact []byte
 	var err error
@@ -215,7 +220,7 @@ func (r *InvoiceCommandRepository) Claim(ctx context.Context, now time.Time, lim
  SELECT id FROM invoice_commands WHERE (status='pending' AND next_attempt_at<=$1) OR (status='processing' AND lease_expires_at<=$1)
  ORDER BY COALESCE(lease_expires_at,next_attempt_at),id LIMIT $2 FOR UPDATE SKIP LOCKED)
  UPDATE invoice_commands c SET status='processing',attempts=c.attempts+1,lease_token=gen_random_uuid(),lease_expires_at=$3,updated_at=$1
- FROM due WHERE c.id=due.id RETURNING c.id,c.command_type,COALESCE(c.payment_id,'00000000-0000-0000-0000-000000000000'::uuid),COALESCE(c.inbox_id,'00000000-0000-0000-0000-000000000000'::uuid),c.attempts,c.lease_token,c.lease_expires_at`, now, limit, now.Add(lease))
+ FROM due WHERE c.id=due.id RETURNING c.id,c.command_type,COALESCE(c.payment_id,'00000000-0000-0000-0000-000000000000'::uuid),COALESCE(c.inbox_id,'00000000-0000-0000-0000-000000000000'::uuid),c.attempts,c.lease_token,c.lease_expires_at,c.next_attempt_at,c.created_at,c.updated_at`, now, limit, now.Add(lease))
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +228,7 @@ func (r *InvoiceCommandRepository) Claim(ctx context.Context, now time.Time, lim
 	var commands []ports.InvoiceCommand
 	for rows.Next() {
 		var c ports.InvoiceCommand
-		if err := rows.Scan(&c.ID, &c.CommandType, &c.PaymentID, &c.InboxID, &c.Attempts, &c.LeaseToken, &c.LeaseExpiresAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.CommandType, &c.PaymentID, &c.InboxID, &c.Attempts, &c.LeaseToken, &c.LeaseExpiresAt, &c.NextAttemptAt, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Status = "processing"

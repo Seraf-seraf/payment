@@ -241,6 +241,9 @@ func newCommand(kind string, paymentID, inboxID uuid.UUID, now time.Time) ports.
 	return ports.InvoiceCommand{ID: uuid.New(), CommandType: kind, PaymentID: paymentID, InboxID: inboxID, Status: "pending", NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
 }
 func (w *Worker) wake(ctx context.Context, r ports.Repositories, inbox d.Inbox, now time.Time) error {
+	if len(inbox.Observation.References) > 1 {
+		return r.InvoiceInbox.SetState(ctx, inbox.ID, "review", "ambiguous_reference", nil, now)
+	}
 	ids, err := r.Invoices.Match(ctx, inbox.ConnectionID, inbox.Observation.ExternalInvoiceID, inbox.Observation.Reference)
 	if err != nil {
 		return err
@@ -394,6 +397,7 @@ func (w *Worker) issue(ctx context.Context, c ports.InvoiceCommand, reconcile bo
 			}
 			changed = current.IssuanceState != "rejected"
 			current.IssuanceState = "rejected"
+			changed = removeReview(&current, "issuance_unknown") || changed
 			reason = "issue_failed"
 			if current.CreditedMinor == 0 {
 				p.Status = payment.StatusFailed
@@ -483,6 +487,10 @@ func removeReview(v *d.Record, reason string) bool {
 func persistProjection(ctx context.Context, r ports.Repositories, v *d.Record, p *payment.Payment, reason string, now time.Time) error {
 	v.Revision++
 	v.UpdatedAt = now
+	return saveProjection(ctx, r, v, p, reason, now)
+}
+
+func saveProjection(ctx context.Context, r ports.Repositories, v *d.Record, p *payment.Payment, reason string, now time.Time) error {
 	if len(v.ReviewReasons) > 0 {
 		reason = "review_required"
 	}

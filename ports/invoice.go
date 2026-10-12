@@ -13,15 +13,23 @@ import (
 
 type InvoiceUseCase interface {
 	CreateInvoicePayment(ctx context.Context, req invoicedomain.Request, merchant merchantdomain.Merchant) (InvoiceCreateResult, error)
+	GetInvoicePayment(ctx context.Context, id uuid.UUID, merchant merchantdomain.Merchant) (InvoiceGetResult, error)
 }
 
 type InvoiceCreateResult struct {
 	Invoice invoicedomain.Record
+	Status  paymentdomain.Status
 	Created bool
+}
+
+type InvoiceGetResult struct {
+	Invoice invoicedomain.Record
+	Status  paymentdomain.Status
 }
 
 type InvoiceRepository interface {
 	FindByMerchantAndRequestID(ctx context.Context, merchantID, requestID uuid.UUID) (invoicedomain.Record, error)
+	LockByMerchantAndPaymentID(ctx context.Context, merchantID, paymentID uuid.UUID) (invoicedomain.Record, error)
 	Create(ctx context.Context, record invoicedomain.Record) (invoicedomain.Record, error)
 	Lock(ctx context.Context, id uuid.UUID) (invoicedomain.Record, error)
 	Save(ctx context.Context, record invoicedomain.Record) error
@@ -32,19 +40,7 @@ type InvoiceRepository interface {
 	RecordEvidence(ctx context.Context, evidence invoicedomain.Evidence) (bool, bool, error)
 }
 
-type InvoiceCommand struct {
-	ID             uuid.UUID
-	CommandType    string
-	PaymentID      uuid.UUID
-	InboxID        uuid.UUID
-	Attempts       int
-	LeaseToken     uuid.UUID
-	LeaseExpiresAt time.Time
-	Status         string
-	NextAttemptAt  time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
+type InvoiceCommand = invoicedomain.Command
 
 type InvoiceCommandRepository interface {
 	Create(ctx context.Context, command InvoiceCommand) error

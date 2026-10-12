@@ -6,7 +6,7 @@ OPENAPI_SPEC ?= api/openapi.yaml
 OAPI_CONFIG ?= oapi-codegen.yaml
 CONFIG_PATH ?= configs/config.yaml
 
-.PHONY: help tidy fmt check test test-un test-fn build run generate migrate-up migrate-down migrate-status clean
+.PHONY: help tidy fmt check test test-u test-fn build run generate migrate-up migrate-down migrate-status clean
 
 help: ## Показать список доступных команд
 	@awk 'BEGIN {FS = ":.*##"; printf "Доступные команды:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -22,13 +22,13 @@ check: ## Проверить go mod tidy, gofmt и go vet
 	gofmt -w ./cmd ./adapter ./app ./bootstrap ./domain ./pkg ./ports ./service
 	go vet ./...
 
-test: test-un ## Запустить unit-тесты
+test: test-u ## Запустить unit-тесты
 
-test-un: ## Запустить unit-тесты без БД
+test-u: ## Запустить unit-тесты без БД
 	go test ./...
 
-test-fn: ## Запустить функциональные тесты в dev-БД из CONFIG_PATH
-	CONFIG_PATH=$(abspath $(CONFIG_PATH)) go test -tags=functional -run '^TestFunctional' -count=1 ./...
+test-fn: ## Запустить функциональные тесты с PostgreSQL testcontainer
+	go test -tags=functional -run '^TestFunctional' -count=1 ./...
 
 build: ## Собрать бинарный файл сервиса
 	mkdir -p $(BIN_DIR)

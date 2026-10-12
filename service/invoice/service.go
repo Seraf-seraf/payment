@@ -2,17 +2,12 @@ package invoice
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"math"
 	"net"
-	"net/mail"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	invoicedomain "github.com/Seraf-seraf/payment/domain/invoice"
 	merchantdomain "github.com/Seraf-seraf/payment/domain/merchant"
@@ -24,12 +19,11 @@ import (
 )
 
 var (
-	ErrInvalidRequest        = errors.New("invalid invoice request")
+	ErrInvalidRequest        = invoicedomain.ErrInvalidRequest
 	ErrIdempotencyConflict   = errors.New("invoice idempotency conflict")
 	ErrUnsupportedTerms      = errors.New("unsupported invoice terms")
 	ErrConnectionUnavailable = errors.New("invoice connection unavailable")
-	innPattern               = regexp.MustCompile(`^[0-9]{10}$`)
-	kppPattern               = regexp.MustCompile(`^[0-9]{9}$`)
+	ErrNotFound              = paymentservice.ErrNotFound
 )
 
 const (
@@ -55,22 +49,23 @@ func (s *Service) CreateInvoicePayment(ctx context.Context, req invoicedomain.Re
 	if s.invoices == nil || s.registry == nil || s.tx == nil || s.now == nil {
 		return ports.InvoiceCreateResult{}, errors.New("invoice service is not configured")
 	}
-	if err := normalizeAndValidate(&req); err != nil {
+	req = invoicedomain.NormalizeRequest(req)
+	if err := invoicedomain.ValidateRequest(req); err != nil {
 		return ports.InvoiceCreateResult{}, err
 	}
-	hash, err := requestHash(req)
+	hash, err := invoicedomain.RequestHash(req)
 	if err != nil {
 		return ports.InvoiceCreateResult{}, err
 	}
 	if existing, err := s.invoices.FindByMerchantAndRequestID(ctx, merchant.ID, req.RequestID); err == nil {
-		return replay(existing, hash)
+		return s.replay(ctx, existing, hash, merchant.ID)
 	} else if !errors.Is(err, paymentservice.ErrNotFound) {
 		return ports.InvoiceCreateResult{}, err
 	}
 
 	now := s.now().UTC()
-	if !req.AcceptUntil.After(now) {
-		return ports.InvoiceCreateResult{}, ErrInvalidRequest
+	if err := invoicedomain.ValidateNewDeadline(req.AcceptUntil, now); err != nil {
+		return ports.InvoiceCreateResult{}, err
 	}
 	connection, ok := s.registry.ForMerchant(merchant.ID)
 	if !ok || connection.MerchantID != merchant.ID || connection.ID == "" || merchant.CallbackURL == "" {
@@ -139,7 +134,7 @@ func (s *Service) CreateInvoicePayment(ctx context.Context, req invoicedomain.Re
 		if errors.Is(err, paymentservice.ErrAlreadyExists) {
 			existing, readErr := s.invoices.FindByMerchantAndRequestID(ctx, merchant.ID, req.RequestID)
 			if readErr == nil {
-				return replay(existing, hash)
+				return s.replay(ctx, existing, hash, merchant.ID)
 			}
 			if !errors.Is(readErr, paymentservice.ErrNotFound) {
 				return ports.InvoiceCreateResult{}, errors.Join(err, readErr)
@@ -148,7 +143,71 @@ func (s *Service) CreateInvoicePayment(ctx context.Context, req invoicedomain.Re
 		}
 		return ports.InvoiceCreateResult{}, err
 	}
-	return ports.InvoiceCreateResult{Invoice: created, Created: true}, nil
+	return ports.InvoiceCreateResult{Invoice: visibleRecord(created, now), Status: parent.Status, Created: true}, nil
+}
+
+func (s *Service) GetInvoicePayment(ctx context.Context, id uuid.UUID, merchant merchantdomain.Merchant) (ports.InvoiceGetResult, error) {
+	if s.invoices == nil || s.tx == nil || s.now == nil {
+		return ports.InvoiceGetResult{}, errors.New("invoice service is not configured")
+	}
+	var result ports.InvoiceGetResult
+	err := s.tx.WithinTx(ctx, func(txCtx context.Context, repos ports.Repositories) error {
+		if repos.Invoices == nil {
+			return errors.New("invoice transaction repository is incomplete")
+		}
+		record, err := repos.Invoices.LockByMerchantAndPaymentID(txCtx, merchant.ID, id)
+		if err != nil {
+			return err
+		}
+		payment, err := repos.Invoices.LockPayment(txCtx, id)
+		if err != nil {
+			return err
+		}
+		if payment.MerchantID != merchant.ID {
+			return ErrNotFound
+		}
+		result = ports.InvoiceGetResult{Invoice: visibleRecord(record, s.now().UTC()), Status: payment.Status}
+		return nil
+	})
+	if err != nil {
+		return ports.InvoiceGetResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Service) replay(ctx context.Context, existing invoicedomain.Record, hash [32]byte, merchantID uuid.UUID) (ports.InvoiceCreateResult, error) {
+	if existing.RequestHash != hash {
+		return ports.InvoiceCreateResult{}, ErrIdempotencyConflict
+	}
+	projection, err := s.GetInvoicePayment(ctx, existing.PaymentID, merchantdomain.Merchant{ID: merchantID})
+	if err != nil {
+		return ports.InvoiceCreateResult{}, err
+	}
+	return ports.InvoiceCreateResult{Invoice: projection.Invoice, Status: projection.Status}, nil
+}
+
+func visibleRecord(record invoicedomain.Record, now time.Time) invoicedomain.Record {
+	if record.Artifact == nil {
+		return record
+	}
+	artifact := *record.Artifact
+	if artifact.NextAction != nil {
+		action := *artifact.NextAction
+		if (action.ValidUntil != nil && !action.ValidUntil.After(now)) || (action.Type == "redirect" && action.ValidUntil == nil) {
+			artifact.NextAction = nil
+		} else {
+			artifact.NextAction = &action
+		}
+	}
+	artifact.Documents = make([]invoicedomain.Document, 0, len(record.Artifact.Documents))
+	for _, document := range record.Artifact.Documents {
+		if document.ValidUntil != nil && !document.ValidUntil.After(now) {
+			continue
+		}
+		artifact.Documents = append(artifact.Documents, document)
+	}
+	record.Artifact = &artifact
+	return record
 }
 
 func supportsAcceptDeadline(now, acceptUntil time.Time, maxDuration time.Duration) bool {
@@ -186,96 +245,6 @@ func supportsTerms(capabilities invoicedomain.Capabilities, lines []invoicedomai
 	}
 	return true
 }
-
-func replay(existing invoicedomain.Record, hash [32]byte) (ports.InvoiceCreateResult, error) {
-	if existing.RequestHash != hash {
-		return ports.InvoiceCreateResult{}, ErrIdempotencyConflict
-	}
-	return ports.InvoiceCreateResult{Invoice: existing, Created: false}, nil
-}
-
-func requestHash(req invoicedomain.Request) ([32]byte, error) {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	return sha256.Sum256(data), nil
-}
-
-func normalizeAndValidate(req *invoicedomain.Request) error {
-	req.OrderID = strings.TrimSpace(req.OrderID)
-	req.Currency = strings.TrimSpace(req.Currency)
-	req.Description = strings.TrimSpace(req.Description)
-	req.Payer.Kind = strings.TrimSpace(req.Payer.Kind)
-	req.Payer.Name = strings.TrimSpace(req.Payer.Name)
-	req.Payer.INN = strings.TrimSpace(req.Payer.INN)
-	req.Payer.KPP = strings.TrimSpace(req.Payer.KPP)
-	req.Payer.LegalAddress = strings.TrimSpace(req.Payer.LegalAddress)
-	req.Payer.Email = strings.TrimSpace(req.Payer.Email)
-	req.AcceptUntil = req.AcceptUntil.UTC()
-	if req.RequestID == uuid.Nil || textLength(req.OrderID) < 1 || textLength(req.OrderID) > 100 ||
-		req.AmountMinor < 1 || req.AmountMinor > invoicedomain.MaxAmountMinor || req.Currency != "RUB" ||
-		textLength(req.Description) < 1 || textLength(req.Description) > 512 || req.Payer.Kind != "company" || textLength(req.Payer.Name) < 1 || textLength(req.Payer.Name) > 512 ||
-		!innPattern.MatchString(req.Payer.INN) || !kppPattern.MatchString(req.Payer.KPP) ||
-		textLength(req.Payer.LegalAddress) < 1 || textLength(req.Payer.LegalAddress) > 1000 || textLength(req.Payer.Email) > 254 ||
-		len(req.Lines) < 1 || len(req.Lines) > 100 || req.AcceptUntil.IsZero() {
-		return ErrInvalidRequest
-	}
-	if req.Payer.Email != "" {
-		address, err := mail.ParseAddress(req.Payer.Email)
-		if err != nil || address.Address != req.Payer.Email {
-			return ErrInvalidRequest
-		}
-	}
-
-	lineIDs := make(map[string]struct{}, len(req.Lines))
-	var total int64
-	for i := range req.Lines {
-		line := &req.Lines[i]
-		line.ID = strings.TrimSpace(line.ID)
-		line.Name = strings.TrimSpace(line.Name)
-		line.Unit = strings.TrimSpace(line.Unit)
-		if textLength(line.ID) < 1 || textLength(line.ID) > 100 || textLength(line.Name) < 1 || textLength(line.Name) > 512 ||
-			line.Quantity < 1 || line.Quantity > 1_000_000 || line.UnitPriceMinor < 1 ||
-			line.UnitPriceMinor > invoicedomain.MaxAmountMinor || line.Quantity > math.MaxInt64/line.UnitPriceMinor ||
-			line.AmountMinor != line.UnitPriceMinor*line.Quantity || line.AmountMinor > invoicedomain.MaxAmountMinor {
-			return ErrInvalidRequest
-		}
-		switch line.Unit {
-		case "piece", "set", "service":
-		default:
-			return ErrInvalidRequest
-		}
-		if _, exists := lineIDs[line.ID]; exists {
-			return ErrInvalidRequest
-		}
-		lineIDs[line.ID] = struct{}{}
-		line.VAT.Kind = strings.TrimSpace(line.VAT.Kind)
-		switch line.VAT.Kind {
-		case "none":
-			if line.VAT.RateBasisPoints != nil || line.VAT.AmountMinor != 0 {
-				return ErrInvalidRequest
-			}
-		case "included":
-			if line.VAT.RateBasisPoints == nil || *line.VAT.RateBasisPoints < 0 || *line.VAT.RateBasisPoints > 10_000 ||
-				line.VAT.AmountMinor < 0 || line.VAT.AmountMinor > line.AmountMinor {
-				return ErrInvalidRequest
-			}
-		default:
-			return ErrInvalidRequest
-		}
-		if total > invoicedomain.MaxAmountMinor-line.AmountMinor {
-			return ErrInvalidRequest
-		}
-		total += line.AmountMinor
-	}
-	if total != req.AmountMinor {
-		return ErrInvalidRequest
-	}
-	return nil
-}
-
-func textLength(value string) int { return utf8.RuneCountInString(value) }
 
 func validateCallbackURL(value string) error {
 	parsed, err := url.Parse(strings.TrimSpace(value))

@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -51,7 +53,9 @@ func NewRouter(
 	spec := mustOpenAPISpec()
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(limitInvoiceBody)
-		api.Use(nethttpmiddleware.OapiRequestValidator(spec))
+		api.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(spec, &nethttpmiddleware.Options{
+			ErrorHandlerWithOpts: apiRequestValidationError,
+		}))
 		server := NewServer(logger, merchants, payments, invoices, webhooks, hmacMaxSkew, invoiceWebhook...)
 		HandlerWithOptions(server, ChiServerOptions{
 			BaseRouter: api,
@@ -62,6 +66,18 @@ func NewRouter(
 	})
 
 	return r
+}
+
+func apiRequestValidationError(_ context.Context, err error, w http.ResponseWriter, r *http.Request, opts nethttpmiddleware.ErrorHandlerOpts) {
+	if strings.HasPrefix(r.URL.Path, "/api/v1/invoice-payments") || strings.HasPrefix(r.URL.Path, "/api/v1/provider-invoice-webhooks/") {
+		if opts.StatusCode == http.StatusNotFound {
+			writeError(w, opts.StatusCode, "NOT_FOUND", "Маршрут не найден.")
+			return
+		}
+		writeError(w, opts.StatusCode, "VALIDATION_ERROR", "Некорректный запрос.")
+		return
+	}
+	http.Error(w, err.Error(), opts.StatusCode)
 }
 
 type statusRecorder struct {

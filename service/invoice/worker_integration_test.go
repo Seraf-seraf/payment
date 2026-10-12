@@ -11,19 +11,18 @@ import (
 	d "github.com/Seraf-seraf/payment/domain/invoice"
 	merchant "github.com/Seraf-seraf/payment/domain/merchant"
 	outbox "github.com/Seraf-seraf/payment/domain/outbox"
-	"github.com/Seraf-seraf/payment/pkg/config"
+	"github.com/Seraf-seraf/payment/internal/testpostgres"
 	"github.com/Seraf-seraf/payment/ports"
 	service "github.com/Seraf-seraf/payment/service/invoice"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
-	"github.com/pressly/goose/v3"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) { os.Exit(testpostgres.Run(m)) }
 
 type testRegistry struct {
 	connection d.Connection
@@ -80,61 +79,32 @@ type harness struct {
 
 func newHarness(t *testing.T, mode, replay string) *harness {
 	t.Helper()
-	configPath := os.Getenv("CONFIG_PATH")
-	if configPath == "" {
-		configPath = filepath.Join("..", "..", config.DefaultPath)
-	}
-	appConfig, err := config.Load(configPath)
-	must(t, err)
-	if appConfig.App.Env != "local" && appConfig.App.Env != "test" {
-		t.Fatal("functional tests require app.env local or test in CONFIG_PATH")
-	}
-	dsn := appConfig.Postgres.DSN
+	h := newHarnessWithoutInvoice(t, mode, replay)
+	h.createInvoice(t)
+	return h
+}
+
+func newHarnessWithoutInvoice(t *testing.T, mode, replay string) *harness {
+	t.Helper()
+	pool, _ := testpostgres.Schema(t, "../../migrations")
 	ctx := t.Context()
-	root, err := pgxpool.New(ctx, dsn)
-	must(t, err)
-	t.Cleanup(root.Close)
-	schema := "invoice_test_" + uuid.New().String()
-	schema = "\"" + schema + "\""
-	_, err = root.Exec(ctx, "CREATE SCHEMA "+schema)
-	must(t, err)
-	t.Cleanup(func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := root.Exec(cleanupCtx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
-			t.Error(err)
-		}
-	})
-	cfg, err := pgxpool.ParseConfig(dsn)
-	must(t, err)
-	cfg.ConnConfig.RuntimeParams["search_path"] = schema
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	must(t, err)
-	t.Cleanup(pool.Close)
-	sqlDB := stdlib.OpenDB(*cfg.ConnConfig)
-	t.Cleanup(func() {
-		if err := sqlDB.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, os.DirFS("../../migrations"))
-	must(t, err)
-	_, err = provider.Up(ctx)
-	must(t, err)
-	must(t, sqlDB.Close())
 	h := &harness{pool: pool, tx: pg.NewTransactionManager(pool, ""), now: time.Date(2026, 10, 12, 6, 0, 0, 0, time.UTC)}
 	id := uuid.New()
-	_, err = pool.Exec(ctx, `INSERT INTO merchants(id,name,api_key_hash,shared_secret_encrypted,callback_url,provider_name) VALUES($1,'test',$2,'test','https://merchant.example/callback','mock')`, id, uuid.NewString())
+	_, err := pool.Exec(ctx, `INSERT INTO merchants(id,name,api_key_hash,shared_secret_encrypted,callback_url,provider_name) VALUES($1,'test',$2,'test','https://merchant.example/callback','mock')`, id, uuid.NewString())
 	must(t, err)
 	h.registry = &testRegistry{connection: d.Connection{ID: "test-connection", MerchantID: id, ProviderKind: "mock_invoice", EvidenceMode: mode, Capabilities: d.Capabilities{SupportedUnits: []string{"set"}, SupportsVATNone: true, MaxAcceptDuration: 120 * time.Hour, CreationReplay: replay}, Beneficiary: d.Beneficiary{Name: "mock", INN: "7707654321", KPP: "770701001", Account: "00000000000000000000", BankBIK: "000000000", BankName: "mock", CorrespondentAccount: "00000000000000000000"}}, provider: &providerStub{}}
 	h.registry.provider.(*providerStub).capabilities = h.registry.connection.Capabilities
 	h.worker, err = service.NewWorker(h.tx, h.registry, func() time.Time { return h.now }, service.WorkerConfig{PollInterval: time.Second, BatchSize: 20, MaxAttempts: 3}, nil)
 	must(t, err)
+	return h
+}
+
+func (h *harness) createInvoice(t *testing.T) {
+	t.Helper()
 	req := d.Request{RequestID: uuid.New(), OrderID: "order", AmountMinor: 10000, Currency: "RUB", Description: "test", AcceptUntil: h.now.Add(24 * time.Hour), Payer: d.Payer{Kind: "company", Name: "mock", INN: "7701234567", KPP: "770101001", LegalAddress: "mock"}, Lines: []d.Line{{ID: "lot", Name: "lot", Quantity: 1, Unit: "set", UnitPriceMinor: 10000, AmountMinor: 10000, VAT: d.VAT{Kind: "none"}}}}
-	result, err := service.NewService(pg.NewInvoiceRepository(pool), h.registry, h.tx, func() time.Time { return h.now }).CreateInvoicePayment(ctx, req, merchant.Merchant{ID: id, CallbackURL: "https://merchant.example/callback"})
+	result, err := service.NewService(pg.NewInvoiceRepository(h.pool), h.registry, h.tx, func() time.Time { return h.now }).CreateInvoicePayment(t.Context(), req, merchant.Merchant{ID: h.registry.connection.MerchantID, CallbackURL: "https://merchant.example/callback"})
 	must(t, err)
 	h.record = result.Invoice
-	return h
 }
 func must(t *testing.T, err error) {
 	t.Helper()
@@ -269,6 +239,7 @@ func TestFunctionalInvoiceWorkerFinancialDedupAndLateMoney(t *testing.T) {
 	if v := h.load(t); v.CreditedMinor != 4000 || v.FundingState != "partial" {
 		t.Fatalf("partial=%+v", v)
 	}
+	h.assertStatus(t, "pending")
 	before := h.load(t).Revision
 	h.inbox(t, h.credit("operation-1", 4000))
 	h.run(t)
@@ -289,6 +260,9 @@ func TestFunctionalInvoiceWorkerFinancialDedupAndLateMoney(t *testing.T) {
 		t.Fatalf("late payment=%+v", v)
 	}
 	h.assertStatus(t, "succeeded")
+	if h.registry.provider.(*providerStub).issues != 1 || h.count(t, "SELECT count(*) FROM payments") != 1 {
+		t.Fatal("coverage triggered another payment")
+	}
 	var commandsInOutbox int
 	must(t, h.pool.QueryRow(t.Context(), "SELECT count(*) FROM outbox_events WHERE aggregate_type<>'payment'").Scan(&commandsInOutbox))
 	if commandsInOutbox != 0 {
@@ -310,6 +284,9 @@ func TestFunctionalInvoiceWorkerUnmatchedSurvivesBindingLostWakeup(t *testing.T)
 	if state != "unmatched" {
 		t.Fatalf("state=%s", state)
 	}
+	if h.load(t).CreditedMinor != 0 || h.count(t, "SELECT count(*) FROM invoice_commands WHERE command_type='invoice.apply_notification' AND status='completed'") != 1 {
+		t.Fatal("early apply credited unmatched observation or stayed active")
+	}
 	// Simulate committed binding followed by a crash before fast-path wakeup.
 	must(t, h.tx.WithinTx(t.Context(), func(ctx context.Context, r ports.Repositories) error {
 		v, err := r.Invoices.Lock(ctx, h.record.PaymentID)
@@ -322,6 +299,8 @@ func TestFunctionalInvoiceWorkerUnmatchedSurvivesBindingLostWakeup(t *testing.T)
 		return r.Invoices.Save(ctx, v)
 	}))
 	h.now = h.now.Add(time.Minute)
+	h.worker, err = service.NewWorker(h.tx, h.registry, func() time.Time { return h.now }, service.WorkerConfig{PollInterval: time.Second, BatchSize: 20, MaxAttempts: 3}, nil)
+	must(t, err)
 	h.run(t)
 	h.assertStatus(t, "succeeded")
 	must(t, h.pool.QueryRow(t.Context(), "SELECT state FROM invoice_inbox WHERE id=$1", id).Scan(&state))
@@ -627,6 +606,8 @@ func TestFunctionalInvoiceWorkerIncompleteConfirmationDoesNotConsumeFinancialSlo
 func TestFunctionalInvoiceWorkerFinancialRollbackIsAtomicAndRetried(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
+	before := h.load(t)
+	callbacksBefore := h.count(t, "SELECT count(*) FROM outbox_events")
 	wrapper := &failOutboxTx{base: h.tx, fail: true}
 	var err error
 	h.worker, err = service.NewWorker(wrapper, h.registry, func() time.Time { return h.now }, service.WorkerConfig{PollInterval: time.Second, BatchSize: 20, MaxAttempts: 3}, nil)
@@ -639,15 +620,20 @@ func TestFunctionalInvoiceWorkerFinancialRollbackIsAtomicAndRetried(t *testing.T
 	must(t, h.pool.QueryRow(t.Context(), "SELECT count(*) FROM invoice_evidence WHERE payment_id=$1", h.record.PaymentID).Scan(&evidenceCount))
 	var inboxState string
 	must(t, h.pool.QueryRow(t.Context(), "SELECT state FROM invoice_inbox WHERE id=$1", id).Scan(&inboxState))
-	if evidenceCount != 0 || h.load(t).CreditedMinor != 0 || inboxState != "received" {
+	if evidenceCount != 0 || h.load(t).CreditedMinor != 0 || inboxState != "received" || h.load(t).Revision != before.Revision || h.count(t, "SELECT count(*) FROM outbox_events") != callbacksBefore {
 		t.Fatal("financial rollback left a partial evidence/projection/inbox commit")
 	}
+	h.assertStatus(t, "pending")
 	h.now = h.now.Add(time.Second)
 	h.run(t)
 	h.assertStatus(t, "succeeded")
 	must(t, h.pool.QueryRow(t.Context(), "SELECT count(*) FROM invoice_evidence WHERE payment_id=$1", h.record.PaymentID).Scan(&evidenceCount))
-	if evidenceCount != 1 {
+	if evidenceCount != 1 || h.load(t).Revision != before.Revision+1 || h.count(t, "SELECT count(*) FROM outbox_events") != callbacksBefore+1 {
 		t.Fatalf("retry evidence count=%d", evidenceCount)
+	}
+	h.run(t)
+	if h.load(t).Revision != before.Revision+1 || h.count(t, "SELECT count(*) FROM invoice_evidence") != 1 {
+		t.Fatal("completed apply repeated financial result")
 	}
 }
 
@@ -713,5 +699,58 @@ func TestFunctionalInvoiceWorkerUsesConfiguredLeaseTimeoutAndReconcileIntervals(
 	v = h.load(t)
 	if v.NextReconcileAt == nil || !v.NextReconcileAt.Equal(h.now.Add(48*time.Hour)) {
 		t.Fatalf("expired reconcile time %v", v.NextReconcileAt)
+	}
+}
+
+func TestFunctionalInvoiceWorkerDoesNotMixEvidenceModes(t *testing.T) {
+	for _, mode := range []string{"bank_credits", "invoice_confirmation"} {
+		t.Run(mode, func(t *testing.T) {
+			h := newHarness(t, mode, "recover_only")
+			h.run(t)
+			o := h.credit("mixed-evidence", 10000)
+			o.ExternalInvoiceID = h.load(t).ExternalInvoiceID
+			if mode == "bank_credits" {
+				o.EvidenceMode = "invoice_confirmation"
+			} else {
+				o.EvidenceMode = "bank_credits"
+			}
+			h.inbox(t, o)
+			h.run(t)
+			if h.load(t).CreditedMinor != 0 || h.count(t, "SELECT count(*) FROM invoice_evidence") != 0 || h.count(t, "SELECT count(*) FROM invoice_inbox WHERE state='review'") != 1 {
+				t.Fatal("incompatible evidence modes mixed or incident lost")
+			}
+			h.assertStatus(t, "pending")
+		})
+	}
+}
+
+func TestFunctionalInvoiceWorkerStartStopsOnParentCancellation(t *testing.T) {
+	h := newHarness(t, "bank_credits", "recover_only")
+	started, canceled := make(chan struct{}), make(chan struct{})
+	h.registry.provider.(*providerStub).issue = func(ctx context.Context, v d.Record) (d.IssueResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		return d.IssueResult{Outcome: d.OutcomeUnknown}, ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	h.worker.Start(ctx)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not dispatch")
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("parent cancellation did not reach provider")
+	}
+	stopCtx, stopCancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer stopCancel()
+	must(t, h.worker.Stop(stopCtx))
+	if h.load(t).DispatchedAt == nil {
+		t.Fatal("worker shutdown lost dispatch")
 	}
 }

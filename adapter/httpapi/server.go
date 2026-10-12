@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -124,11 +125,49 @@ func (s *Server) CreateInvoicePayment(w http.ResponseWriter, r *http.Request, pa
 		s.writeInvoiceError(w, err, merchant.ID)
 		return
 	}
-	response := invoicePaymentResponse(result.Invoice)
+	response, err := invoicePaymentResponse(result.Invoice, result.Status)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("invoice response projection failed", slog.String("error_code", "invoice_projection_invalid"))
+		}
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Сервис временно недоступен.")
+		return
+	}
 	if result.Created {
 		location := "/api/v1/invoice-payments/" + result.Invoice.PaymentID.String()
 		w.Header().Set("Location", location)
 		writeJSON(w, http.StatusAccepted, response)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) GetInvoicePayment(w http.ResponseWriter, r *http.Request, paymentID openapi_types.UUID, params GetInvoicePaymentParams) {
+	if r.TLS == nil && !remoteIsLoopback(r.RemoteAddr) {
+		writeError(w, http.StatusBadRequest, "TLS_REQUIRED", "Для удалённых запросов требуется TLS.")
+		return
+	}
+	merchant, ok := s.authenticate(w, r.Context(), CreatePaymentParams{
+		XAPIKey: params.XAPIKey, XTimestamp: params.XTimestamp, XSignature: params.XSignature,
+	}, nil)
+	if !ok {
+		return
+	}
+	if s.invoices == nil {
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Выставление счетов отключено.")
+		return
+	}
+	result, err := s.invoices.GetInvoicePayment(r.Context(), uuid.UUID(paymentID), merchant)
+	if err != nil {
+		s.writeInvoiceError(w, err, merchant.ID)
+		return
+	}
+	response, err := invoicePaymentResponse(result.Invoice, result.Status)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("invoice response projection failed", slog.String("error_code", "invoice_projection_invalid"))
+		}
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Сервис временно недоступен.")
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -148,6 +187,8 @@ func remoteIsLoopback(remoteAddr string) bool {
 
 func (s *Server) writeInvoiceError(w http.ResponseWriter, err error, merchantID uuid.UUID) {
 	switch {
+	case errors.Is(err, invoiceservice.ErrNotFound):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Счёт не найден.")
 	case errors.Is(err, invoiceservice.ErrInvalidRequest):
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Некорректные данные счёта.")
 	case errors.Is(err, invoiceservice.ErrIdempotencyConflict):
@@ -160,18 +201,115 @@ func (s *Server) writeInvoiceError(w http.ResponseWriter, err error, merchantID 
 	}
 }
 
-func invoicePaymentResponse(record invoicedomain.Record) InvoicePaymentResponse {
+func invoicePaymentResponse(record invoicedomain.Record, status paymentdomain.Status) (InvoicePaymentResponse, error) {
+	switch status {
+	case paymentdomain.StatusCreating, paymentdomain.StatusPending, paymentdomain.StatusSucceeded, paymentdomain.StatusFailed, paymentdomain.StatusCanceled:
+	default:
+		return InvoicePaymentResponse{}, errors.New("invalid invoice payment status")
+	}
+	if !validInvoiceIssuanceState(record.IssuanceState) || !validInvoiceFundingState(record.FundingState) {
+		return InvoicePaymentResponse{}, errors.New("invalid invoice state")
+	}
+	var artifact *InvoiceArtifact
+	if record.Artifact != nil {
+		var err error
+		artifact, err = invoiceArtifact(record)
+		if err != nil {
+			return InvoicePaymentResponse{}, err
+		}
+	}
+	reasons := append([]string(nil), record.ReviewReasons...)
+	if reasons == nil {
+		reasons = []string{}
+	}
+	confirmedPaid := record.CreditedMinor >= record.Request.AmountMinor
 	return InvoicePaymentResponse{
 		PaymentId: openapi_types.UUID(record.PaymentID), OrderId: record.Request.OrderID,
 		PaymentMethod: LegalEntityInvoice,
-		Status:        InvoicePaymentResponseStatusCreating,
-		IssuanceState: Queued,
-		FundingState:  InvoicePaymentResponseFundingStateNone,
-		AmountMinor:   record.Request.AmountMinor, CreditedMinor: 0,
-		Currency: InvoicePaymentResponseCurrencyRUB, ConfirmedPaid: false,
-		RequiresReview: false, ReviewReasons: []string{}, Revision: 1,
-		AcceptUntil: record.Request.AcceptUntil.UTC(), Invoice: nil,
+		Status:        InvoicePaymentResponseStatus(status), IssuanceState: InvoicePaymentResponseIssuanceState(record.IssuanceState),
+		FundingState: InvoicePaymentResponseFundingState(record.FundingState),
+		AmountMinor:  record.Request.AmountMinor, CreditedMinor: record.CreditedMinor,
+		Currency: InvoicePaymentResponseCurrency(record.Request.Currency), ConfirmedPaid: confirmedPaid,
+		RequiresReview: len(reasons) > 0, ReviewReasons: reasons, Revision: record.Revision,
+		AcceptUntil: record.Request.AcceptUntil.UTC(), PaymentConfirmedAt: utcTime(record.PaymentConfirmedAt),
+		ConfirmationRecordedAt: utcTime(record.ConfirmationRecordedAt), Invoice: artifact,
+	}, nil
+}
+
+func validInvoiceIssuanceState(state string) bool {
+	switch state {
+	case "queued", "dispatched", "issued", "unknown", "rejected", "expired_before_issue":
+		return true
+	default:
+		return false
 	}
+}
+
+func validInvoiceFundingState(state string) bool {
+	switch state {
+	case "none", "partial", "paid", "overpaid":
+		return true
+	default:
+		return false
+	}
+}
+
+func invoiceArtifact(record invoicedomain.Record) (*InvoiceArtifact, error) {
+	stored := record.Artifact
+	artifact := &InvoiceArtifact{
+		Number: strconv.FormatInt(record.InvoiceNumber, 10), Reference: record.Reference,
+		ProviderExpiresAt: utcTime(record.ProviderExpiresAt), Documents: make([]InvoiceDocument, 0, len(stored.Documents)),
+	}
+	if stored.NextAction != nil {
+		action := stored.NextAction
+		switch action.Type {
+		case "bank_transfer":
+			if action.Purpose == "" || action.Beneficiary == nil {
+				return nil, errors.New("invalid bank transfer invoice action")
+			}
+			beneficiary := action.Beneficiary
+			nextAction := &InvoiceArtifact_NextAction{}
+			if err := nextAction.FromBankTransferNextAction(BankTransferNextAction{
+				Type: BankTransfer, Purpose: action.Purpose,
+				Beneficiary: InvoiceBeneficiary{
+					Name: beneficiary.Name, Inn: beneficiary.INN, Kpp: beneficiary.KPP,
+					Account: beneficiary.Account, BankBik: beneficiary.BankBIK, BankName: beneficiary.BankName,
+					CorrespondentAccount: beneficiary.CorrespondentAccount,
+				},
+			}); err != nil {
+				return nil, err
+			}
+			artifact.NextAction = nextAction
+		case "redirect":
+			parsed, err := url.Parse(action.URL)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || action.ValidUntil == nil {
+				return nil, errors.New("invalid redirect invoice action")
+			}
+			nextAction := &InvoiceArtifact_NextAction{}
+			if err := nextAction.FromRedirectNextAction(RedirectNextAction{Type: Redirect, Url: action.URL, ValidUntil: action.ValidUntil.UTC()}); err != nil {
+				return nil, err
+			}
+			artifact.NextAction = nextAction
+		default:
+			return nil, errors.New("unsupported invoice action")
+		}
+	}
+	for _, document := range stored.Documents {
+		parsed, err := url.Parse(document.URL)
+		if err != nil || document.Type != "invoice" || parsed.Scheme == "" || parsed.Host == "" {
+			return nil, errors.New("invalid invoice document")
+		}
+		artifact.Documents = append(artifact.Documents, InvoiceDocument{Type: InvoiceDocumentType(document.Type), Url: document.URL, ValidUntil: utcTime(document.ValidUntil)})
+	}
+	return artifact, nil
+}
+
+func utcTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
 }
 
 // GetHealth возвращает состояние HTTP API.

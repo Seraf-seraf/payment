@@ -128,6 +128,9 @@ func decodeInvoiceSnapshot(body []byte) (invoicedomain.CallbackEnvelope, error) 
 		snapshot.ConfirmedPaid != (snapshot.CreditedMinor >= snapshot.AmountMinor) || snapshot.RequiresReview != (len(snapshot.ReviewReasons) > 0) {
 		return snapshot, errors.New("invalid invoice snapshot")
 	}
+	if snapshot.ConfirmedPaid && (snapshot.ConfirmationRecordedAt == nil || snapshot.ConfirmationRecordedAt.IsZero()) {
+		return snapshot, errors.New("confirmed invoice snapshot has no recorded timestamp")
+	}
 	if !oneOf(snapshot.Status, "creating", "pending", "succeeded", "failed", "canceled") ||
 		!oneOf(snapshot.IssuanceState, "queued", "dispatched", "issued", "unknown", "rejected", "expired_before_issue") ||
 		!oneOf(snapshot.FundingState, "none", "partial", "paid", "overpaid") ||

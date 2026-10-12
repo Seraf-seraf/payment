@@ -63,6 +63,14 @@ curl http://localhost:8080/metrics
 - `TBANK_NOTIFICATION_URL`;
 - `SECURITY_ENCRYPTION_KEY`.
 
+`app.mode` (или env override `APP_MODE`) выбирает компоненты процесса:
+
+- `all` — HTTP API и включённые фоновые workers; это режим по умолчанию;
+- `api` — только HTTP API;
+- `worker` — только включённые фоновые workers, без HTTP listener.
+
+Callback worker запускается при `outbox.enabled`; invoice worker — при `invoices.enabled` и `invoices.worker_enabled`. Режим `all` сам по себе не включает отключённый worker.
+
 Пример локального запуска с другим адресом:
 
 ```bash
@@ -76,7 +84,11 @@ HTTP_ADDR=:8081 CONFIG_PATH=configs/config.yaml make run
 - `merchants`;
 - `payments`;
 - `webhook_events`;
-- `outbox_events`.
+- `outbox_events`;
+- `invoice_payments`;
+- `invoice_evidence`;
+- `invoice_inbox`;
+- `invoice_commands`.
 
 Команды:
 
@@ -106,7 +118,7 @@ OpenAPI-контракт: `api/openapi.yaml`.
 make generate
 ```
 
-Команда также копирует спецификацию в `adapter/httpapi/openapi.yaml`, который embed'ится в бинарный файл.
+`make generate` использует `api/openapi.yaml` и настройки `oapi-codegen.yaml`. Команда копирует спецификацию в `adapter/httpapi/openapi.yaml`, которая встраивается в бинарный файл для OpenAPI-валидации, и создаёт `adapter/httpapi/generated.gen.go`: модели запросов и ответов, enum, интерфейсы handlers, маршрутизацию Chi и strict-server обёртки. Generated Go-файл обновляется через спецификацию и генератор; бизнес-логика и SQL-миграции не генерируются.
 
 ## Подпись запросов мерчанта
 
@@ -156,6 +168,38 @@ POST /api/v1/provider-webhooks/{provider_name}
 
 Для T-Bank успешный ответ возвращается как plain text `OK`.
 
+## Внутренний сценарий invoice
+
+Invoice для юрлица использует отдельные операции:
+
+- `POST /api/v1/invoice-payments` — сохранить намерение и поставить выставление в очередь; первая фиксация возвращает 202, повтор — сохранённую проекцию;
+- `GET /api/v1/invoice-payments/{payment_id}` — получить состояние своего invoice;
+- `POST /api/v1/provider-invoice-webhooks/{connection_id}` — принять проверенное уведомление подключения.
+
+Создание требует `Idempotency-Key`, равный UUID `request_id`, и обычную merchant HMAC-подпись исходных байтов. Денежные величины передаются целыми minor units. Для GET подписывается `<X-Timestamp>.`. Схемы запросов и ответов определены в `api/openapi.yaml`; acquiring endpoint по-прежнему требует `receipt`.
+
+Секция `invoices` в example-конфиге выключена. `mock_invoice` разрешён только для local/test, не создаёт реальный банковский счёт и возвращает реквизиты для `bank_transfer` без выдуманного URL. Его webhook требует HMAC-SHA256 исходного тела в `X-Mock-Signature`; имя env secret задаётся в подключении. Реальный банк этим сценарием не подключён.
+
+Входящие факты хранятся в `invoice_inbox`, внутренние задания — в отдельной `invoice_commands`. Уведомление с несколькими разными reference сохраняется для review без начисления денег; повтор одного reference обрабатывается как одна ссылка. Существующий callback worker читает только `outbox_events`; invoice callback содержит сохранённый snapshot `invoice-integration/1`. Payment учитывает финансовое покрытие и review, а резерв и статусы исполнения заказа принадлежат магазину.
+
+Нормализация запроса, request hash и правила финансового покрытия принадлежат `domain/invoice`. `service/invoice` координирует транзакции, durable дедупликацию evidence, lease fencing и сохранение callback snapshot. Денежное покрытие применяется только после результата дедупликации; повтор не увеличивает сумму или revision.
+
+### Проверки с PostgreSQL
+
+```bash
+make test-u
+make test-fn
+go test -race ./service/invoice ./adapter/provider/mockinvoice ./adapter/notification/httpcallback
+go vet ./...
+make build
+make generate
+cmp api/openapi.yaml adapter/httpapi/openapi.yaml
+```
+
+Для `test-fn` нужен работающий Docker. Testcontainers создаёт PostgreSQL `postgres:16.13-alpine3.23` и БД `payment_test` при старте suite; каждый тест получает отдельную schema со всеми миграциями. DSN приходит только из контейнера: `CONFIG_PATH` и внешняя БД для этих тестов не используются. Ошибка запуска контейнера завершает suite с ошибкой, без Skip. После тестов удаляются их schemas и контейнер.
+
+`test-u` запускает unit-тесты без Docker; `test-fn` — PostgreSQL storage, HTTP, worker и callback сценарии с build tag `functional` без test cache. `make test` сохранён как alias для `test-u`. Это локальные gates, они не меняют production deploy или CI.
+
 ## Outbox и callback
 
 При обработке webhook сервис обновляет статус платежа и создает событие в `outbox_events`. Outbox worker выбирает pending-события и отправляет callback на `callback_url` мерчанта.
@@ -186,12 +230,15 @@ make generate
 make clean
 ```
 
-Перед отправкой изменений полезно запускать:
+Для проверки изменений без форматирования всего репозитория и изменения зависимостей:
 
 ```bash
-make check
-make test
+make test-u
+make test-fn
+go vet ./...
 ```
+
+`make check` и `make fmt` форматируют весь репозиторий; `make check` также запускает `go mod tidy`. Для проверки узкого diff форматируйте только изменённые Go-файлы.
 
 ## Структура проекта
 

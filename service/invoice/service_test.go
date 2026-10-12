@@ -52,13 +52,21 @@ func TestCreateInvoicePaymentIsAtomicAndReplaysAfterDeadline(t *testing.T) {
 		repositories.outbox.events[0].EventType != "payment.invoice.updated" || string(envelope["revision"]) != "1" || string(envelope["reason"]) != `"created"` {
 		t.Fatalf("initial callback event = %+v", repositories.outbox.events[0])
 	}
+	key := merchant.ID.String() + ":" + request.RequestID.String()
+	stored := repositories.invoices.records[key]
+	stored.IssuanceState, stored.FundingState = "issued", "paid"
+	stored.CreditedMinor, stored.Revision = request.AmountMinor, 3
+	confirmedAt := now.Add(time.Minute)
+	stored.PaymentConfirmedAt, stored.ConfirmationRecordedAt = &confirmedAt, &confirmedAt
+	repositories.invoices.records[key] = stored
+	repositories.payments.created[0].Status = paymentdomain.StatusSucceeded
 
 	now = request.AcceptUntil.Add(time.Second)
 	second, err := service.CreateInvoicePayment(t.Context(), request, merchant)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Created || second.Invoice.PaymentID != first.Invoice.PaymentID {
+	if second.Created || second.Invoice.PaymentID != first.Invoice.PaymentID || second.Status != paymentdomain.StatusSucceeded || second.Invoice.FundingState != "paid" || second.Invoice.CreditedMinor != request.AmountMinor || second.Invoice.Revision != 3 {
 		t.Fatalf("replay result = %+v", second)
 	}
 	changed := request
@@ -68,6 +76,42 @@ func TestCreateInvoicePaymentIsAtomicAndReplaysAfterDeadline(t *testing.T) {
 	}
 	if len(repositories.payments.created) != 1 || len(repositories.commands.commands) != 1 || len(repositories.outbox.events) != 1 {
 		t.Fatal("replay created new rows")
+	}
+}
+
+func TestGetInvoicePaymentScopesMerchantAndHidesExpiredLinks(t *testing.T) {
+	now := fixedNow()
+	merchant := merchantdomain.Merchant{ID: uuid.New(), CallbackURL: "https://merchant.example/callback"}
+	repositories := newMemoryRepositories()
+	service := NewService(repositories.invoices, fixedConnectionRegistry{merchantID: merchant.ID}, repositories, func() time.Time { return now })
+	created, err := service.CreateInvoicePayment(t.Context(), validRequest(), merchant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now
+	stored := created.Invoice
+	stored.Artifact = &invoicedomain.Artifact{
+		NextAction: &invoicedomain.NextAction{Type: "redirect", URL: "https://provider.example/pay/123", ValidUntil: &expires},
+		Documents: []invoicedomain.Document{
+			{Type: "invoice", URL: "https://provider.example/expired.pdf", ValidUntil: &expires},
+			{Type: "invoice", URL: "https://provider.example/invoice.pdf"},
+		},
+	}
+	key := merchant.ID.String() + ":" + stored.Request.RequestID.String()
+	repositories.invoices.records[key] = stored
+
+	projection, err := service.GetInvoicePayment(t.Context(), stored.PaymentID, merchant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Status != paymentdomain.StatusCreating || projection.Invoice.Artifact == nil || projection.Invoice.Artifact.NextAction != nil || len(projection.Invoice.Artifact.Documents) != 1 || projection.Invoice.Artifact.Documents[0].URL != "https://provider.example/invoice.pdf" {
+		t.Fatalf("read projection did not hide expired links: %+v", projection)
+	}
+	if repositories.invoices.records[key].Artifact.NextAction == nil || len(repositories.invoices.records[key].Artifact.Documents) != 2 {
+		t.Fatal("read projection mutated stored invoice artifact")
+	}
+	if _, err := service.GetInvoicePayment(t.Context(), stored.PaymentID, merchantdomain.Merchant{ID: uuid.New()}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign merchant lookup error = %v", err)
 	}
 }
 
@@ -155,7 +199,7 @@ func TestNormalizeInvoiceRequestMoneyBoundariesAndLineOrder(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			req := validRequest()
 			test.edit(&req)
-			if err := normalizeAndValidate(&req); !errors.Is(err, ErrInvalidRequest) {
+			if err := invoicedomain.ValidateRequest(req); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("validation error = %v", err)
 			}
 		})
@@ -168,17 +212,17 @@ func TestNormalizeInvoiceRequestMoneyBoundariesAndLineOrder(t *testing.T) {
 	first.AmountMinor++
 	second.Lines = []invoicedomain.Line{first.Lines[1], first.Lines[0]}
 	second.AmountMinor = first.AmountMinor
-	if err := normalizeAndValidate(&first); err != nil {
+	if err := invoicedomain.ValidateRequest(first); err != nil {
 		t.Fatal(err)
 	}
-	if err := normalizeAndValidate(&second); err != nil {
+	if err := invoicedomain.ValidateRequest(second); err != nil {
 		t.Fatal(err)
 	}
-	firstHash, err := requestHash(first)
+	firstHash, err := invoicedomain.RequestHash(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondHash, err := requestHash(second)
+	secondHash, err := invoicedomain.RequestHash(second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +272,8 @@ type memoryRepositories struct {
 }
 
 func newMemoryRepositories() *memoryRepositories {
-	return &memoryRepositories{payments: &memoryPayments{}, invoices: &memoryInvoices{records: map[string]invoicedomain.Record{}}, commands: &memoryCommands{}, outbox: &memoryOutbox{}}
+	payments := &memoryPayments{}
+	return &memoryRepositories{payments: payments, invoices: &memoryInvoices{records: map[string]invoicedomain.Record{}, payments: payments}, commands: &memoryCommands{}, outbox: &memoryOutbox{}}
 }
 
 func (r *memoryRepositories) ensure() {
@@ -236,8 +281,9 @@ func (r *memoryRepositories) ensure() {
 		r.payments = &memoryPayments{}
 	}
 	if r.invoices == nil {
-		r.invoices = &memoryInvoices{records: map[string]invoicedomain.Record{}}
+		r.invoices = &memoryInvoices{records: map[string]invoicedomain.Record{}, payments: r.payments}
 	}
+	r.invoices.payments = r.payments
 	if r.commands == nil {
 		r.commands = &memoryCommands{}
 	}
@@ -289,7 +335,35 @@ func (r *memoryPayments) Create(_ context.Context, payment paymentdomain.Payment
 
 type memoryInvoices struct {
 	ports.InvoiceRepository
-	records map[string]invoicedomain.Record
+	records  map[string]invoicedomain.Record
+	payments *memoryPayments
+}
+
+func (r *memoryInvoices) Lock(_ context.Context, id uuid.UUID) (invoicedomain.Record, error) {
+	for _, record := range r.records {
+		if record.PaymentID == id {
+			return record, nil
+		}
+	}
+	return invoicedomain.Record{}, paymentservice.ErrNotFound
+}
+
+func (r *memoryInvoices) LockByMerchantAndPaymentID(_ context.Context, merchantID, paymentID uuid.UUID) (invoicedomain.Record, error) {
+	for _, record := range r.records {
+		if record.MerchantID == merchantID && record.PaymentID == paymentID {
+			return record, nil
+		}
+	}
+	return invoicedomain.Record{}, paymentservice.ErrNotFound
+}
+
+func (r *memoryInvoices) LockPayment(_ context.Context, id uuid.UUID) (paymentdomain.Payment, error) {
+	for _, payment := range r.payments.created {
+		if payment.ID == id {
+			return payment, nil
+		}
+	}
+	return paymentdomain.Payment{}, paymentservice.ErrNotFound
 }
 
 func (r *memoryInvoices) FindByMerchantAndRequestID(_ context.Context, merchantID, requestID uuid.UUID) (invoicedomain.Record, error) {

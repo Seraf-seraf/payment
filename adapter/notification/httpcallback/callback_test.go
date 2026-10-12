@@ -137,6 +137,34 @@ func TestSendInvoiceRejectsCorruptSnapshotWithoutHTTP(t *testing.T) {
 	}
 }
 
+func TestSendInvoiceRejectsConfirmedSnapshotWithoutRecordedAt(t *testing.T) {
+	merchantID, paymentID, eventID := uuid.New(), uuid.New(), uuid.New()
+	snapshot := invoiceSnapshot(eventID, merchantID, paymentID)
+	snapshot.Status = "succeeded"
+	snapshot.FundingState = "paid"
+	snapshot.CreditedMinor = snapshot.AmountMinor
+	snapshot.ConfirmedPaid = true
+	snapshot.ConfirmationRecordedAt = nil
+	body, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	sender := NewWithClient(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}, time.Now)
+	merchant := merchantdomain.Merchant{ID: merchantID, CallbackURL: "https://merchant.test/callback"}
+	payment := paymentdomain.Payment{ID: paymentID, MerchantID: merchantID}
+	event := outboxdomain.Event{ID: eventID, AggregateType: "payment", AggregateID: paymentID, EventType: snapshot.EventType, Payload: body}
+	if err := sender.Send(t.Context(), merchant, payment, event); err == nil {
+		t.Fatal("confirmed snapshot without recorded timestamp accepted")
+	}
+	if calls != 0 {
+		t.Fatal("invalid financial snapshot sent over HTTP")
+	}
+}
+
 func TestSendInvoiceRetryPreservesBodyAndRefreshesSignature(t *testing.T) {
 	merchant := merchantdomain.Merchant{ID: uuid.New(), CallbackURL: "https://merchant.test/callback", SharedSecret: "secret"}
 	payment := paymentdomain.Payment{ID: uuid.New(), MerchantID: merchant.ID, Status: paymentdomain.StatusSucceeded}

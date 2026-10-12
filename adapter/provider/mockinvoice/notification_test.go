@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"github.com/Seraf-seraf/payment/ports"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,52 @@ func TestInvoiceDecoderDoesNotTrustCallerFinancialKey(t *testing.T) {
 	forged := `{"type":"settlement","operation_id":"unproven-id","amount_minor":100,"currency":"RUB","recipient_account":"account","payer_inn":"7701234567","final_incoming":true,"canonical_financial_key":true}`
 	if _, err := decoder.VerifyAndDecode(signedEnvelope(forged, "test-secret")); !errors.Is(err, ports.ErrInvoiceNotificationMalformed) {
 		t.Fatal("caller supplied canonical-key proof was accepted")
+	}
+}
+
+func TestInvoiceDecoderRetainsMultipleReferencesForReview(t *testing.T) {
+	decoder, err := NewNotificationDecoder("test-secret", "bank_credits", "shared_operation_id", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := "INV-0123456789ABCDEF0123456789ABCDEF"
+	second := "INV-FEDCBA9876543210FEDCBA9876543210"
+	for _, tc := range []struct {
+		name      string
+		reference string
+		want      string
+		ambiguous bool
+		wantError bool
+	}{
+		{name: "single remains exact", reference: first, want: first},
+		{name: "repeated reference is not ambiguous", reference: first + " " + first, want: first},
+		{name: "multiple references retained", reference: first + "  " + second, want: first + " " + second, ambiguous: true},
+		{name: "unknown token rejected", reference: first + " OTHER", wantError: true},
+		{name: "malformed token rejected", reference: first + " INV-0123456789abcdef0123456789abcdef", wantError: true},
+		{name: "single with surrounding whitespace remains invalid", reference: " " + first, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"type":"settlement","reference":"` + tc.reference + `","amount_minor":100,"currency":"RUB","recipient_account":"account","payer_inn":"7701234567","final_incoming":true}`
+			got, err := decoder.VerifyAndDecode(signedEnvelope(body, "test-secret"))
+			if tc.wantError {
+				if !errors.Is(err, ports.ErrInvoiceNotificationMalformed) {
+					t.Fatalf("error=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.ambiguous {
+				if got.Observation.Reference != "" || strings.Join(got.Observation.References, " ") != tc.want {
+					t.Fatalf("reference=%q references=%q", got.Observation.Reference, got.Observation.References)
+				}
+				return
+			}
+			if got.Observation.Reference != tc.want || len(got.Observation.References) != 0 {
+				t.Fatalf("reference=%q references=%q", got.Observation.Reference, got.Observation.References)
+			}
+		})
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	paymentdomain "github.com/Seraf-seraf/payment/domain/payment"
 	"github.com/Seraf-seraf/payment/pkg/crypto"
 	"github.com/Seraf-seraf/payment/ports"
+	invoiceservice "github.com/Seraf-seraf/payment/service/invoice"
 	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -176,7 +177,7 @@ func TestCreateInvoicePaymentAcceptsSignedRequest(t *testing.T) {
 	invoices := &noopInvoices{result: ports.InvoiceCreateResult{Created: true, Invoice: invoicedomain.Record{
 		PaymentID: paymentID, Request: invoicedomain.Request{RequestID: requestID, OrderID: "DV-1042", AmountMinor: 1200000, Currency: "RUB", AcceptUntil: time.Date(2030, 10, 13, 6, 0, 0, 0, time.UTC)},
 		IssuanceState: "queued", FundingState: "none", Revision: 1,
-	}}}
+	}, Status: paymentdomain.StatusCreating}}
 	handler := NewRouter(slog.Default(), fixedMerchantAuth{}, &noopPayments{}, invoices, nil, 5*time.Minute)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/invoice-payments", strings.NewReader(requestBody))
 	req.RemoteAddr = "127.0.0.1:1234"
@@ -286,15 +287,37 @@ func (p *noopPayments) GetPayment(context.Context, uuid.UUID) (paymentdomain.Pay
 }
 
 type noopInvoices struct {
-	request invoicedomain.Request
-	result  ports.InvoiceCreateResult
-	calls   int
+	request   invoicedomain.Request
+	result    ports.InvoiceCreateResult
+	getResult ports.InvoiceGetResult
+	createErr error
+	getErr    error
+	calls     int
+	getCalls  int
 }
 
 func (s *noopInvoices) CreateInvoicePayment(_ context.Context, request invoicedomain.Request, _ merchantdomain.Merchant) (ports.InvoiceCreateResult, error) {
 	s.request = request
 	s.calls++
+	if s.createErr != nil {
+		return ports.InvoiceCreateResult{}, s.createErr
+	}
 	return s.result, nil
+}
+
+func (s *noopInvoices) GetInvoicePayment(_ context.Context, id uuid.UUID, merchant merchantdomain.Merchant) (ports.InvoiceGetResult, error) {
+	s.getCalls++
+	if s.getErr != nil {
+		return ports.InvoiceGetResult{}, s.getErr
+	}
+	result := s.getResult
+	if result.Invoice.PaymentID == uuid.Nil {
+		result = ports.InvoiceGetResult{Invoice: s.result.Invoice, Status: s.result.Status}
+	}
+	if result.Invoice.PaymentID != id || result.Invoice.MerchantID != merchant.ID {
+		return ports.InvoiceGetResult{}, invoiceservice.ErrNotFound
+	}
+	return result, nil
 }
 
 func TestCreateInvoicePaymentDisabledReturnsServiceUnavailable(t *testing.T) {

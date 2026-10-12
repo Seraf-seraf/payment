@@ -102,27 +102,41 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 		log.Info("outbox worker started", slog.Int("worker_count", cfg.Outbox.WorkerCount))
 	}
 
+	var stopInvoiceWorker func(context.Context) error
+	if invoices.worker != nil {
+		stopInvoiceWorker = invoices.worker.Stop
+	}
 	return func(shutdownCtx context.Context) error {
-		var shutdownErr error
-		invoiceStopped := true
-		if invoices.worker != nil {
-			err := invoices.worker.Stop(shutdownCtx)
-			invoiceStopped = err == nil
-			shutdownErr = errors.Join(shutdownErr, err)
-		}
-		if worker != nil {
-			shutdownErr = errors.Join(shutdownErr, worker.Stop(shutdownCtx))
-		}
-		if server != nil {
-			shutdownErr = errors.Join(shutdownErr, server.Shutdown(shutdownCtx))
-		}
-		if invoiceStopped {
-			for _, close := range closers {
-				close()
-			}
-		}
-		return shutdownErr
+		return shutdownRuntime(shutdownCtx, stopInvoiceWorker, worker, server, closers)
 	}, nil
+}
+
+func shutdownRuntime(
+	ctx context.Context,
+	stopInvoiceWorker func(context.Context) error,
+	outboxWorker ports.OutboxWorker,
+	server *http.Server,
+	closers []func(),
+) error {
+	var shutdownErr error
+	invoiceStopped := true
+	if stopInvoiceWorker != nil {
+		err := stopInvoiceWorker(ctx)
+		invoiceStopped = err == nil
+		shutdownErr = errors.Join(shutdownErr, err)
+	}
+	if outboxWorker != nil {
+		shutdownErr = errors.Join(shutdownErr, outboxWorker.Stop(ctx))
+	}
+	if server != nil {
+		shutdownErr = errors.Join(shutdownErr, server.Shutdown(ctx))
+	}
+	if invoiceStopped {
+		for _, close := range closers {
+			close()
+		}
+	}
+	return shutdownErr
 }
 
 func buildProviderRegistry(cfg config.Config) (*ProviderRegistry, error) {

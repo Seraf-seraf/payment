@@ -92,6 +92,33 @@ paths:
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
+  /invoice-payments/{payment_id}:
+    get:
+      operationId: getInvoicePayment
+      summary: Read a legal entity invoice payment projection
+      parameters:
+        - $ref: '#/components/parameters/XAPIKey'
+        - $ref: '#/components/parameters/XTimestamp'
+        - $ref: '#/components/parameters/XSignature'
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invoice payment projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicePaymentResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /payments/{payment_id}:
     get:
       operationId: getPayment

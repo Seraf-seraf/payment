@@ -57,7 +57,7 @@ func notificationPayload(t *testing.T, o d.Observation, event, operation, channe
 }
 func (h *harness) notificationRouter(t *testing.T, strategy string, aliases map[string]string, tx ports.TransactionManager) (http.Handler, ports.InvoiceNotificationDecoder) {
 	t.Helper()
-	decoder, err := mock.NewNotificationDecoder("invoice-test-secret", h.record.EvidenceMode, strategy, aliases)
+	decoder, err := mock.NewNotificationDecoder("invoice-test-secret", h.registry.connection.EvidenceMode, strategy, aliases)
 	must(t, err)
 	if tx == nil {
 		tx = h.tx
@@ -235,7 +235,7 @@ func TestFunctionalInvoiceWebhookMismatchOverpaidAndLateFactsAreRetained(t *test
 	if h.load(t).CreditedMinor != 0 || h.count(t, "SELECT count(*) FROM invoice_evidence WHERE eligible=false") != 2 || h.count(t, "SELECT count(*) FROM invoice_inbox WHERE state='review'") != 2 {
 		t.Fatal("mismatching financial facts disappeared or were counted")
 	}
-	h.now = h.record.Request.AcceptUntil
+	h.now = h.record.Request.AcceptUntil.Add(time.Second)
 	_, err := h.pool.Exec(t.Context(), "UPDATE payments SET status='canceled' WHERE id=$1", h.record.PaymentID)
 	must(t, err)
 	postInvoiceNotification(t, router, notificationPayload(t, h.credit("unused", 12000), "late-overpay", "late-operation", ""), 200)
@@ -271,4 +271,82 @@ func TestFunctionalInvoiceWebhookPaymentAfterFailureIsNotDiscarded(t *testing.T)
 	if v.CreditedMinor != 10000 || len(v.ReviewReasons) == 0 || v.ConfirmationRecordedAt == nil {
 		t.Fatal("financial confirmation after failed state was discarded or did not require review")
 	}
+}
+
+func TestFunctionalInvoiceWebhookConflictingIdentityRequiresReview(t *testing.T) {
+	h := newHarness(t, "bank_credits", "recover_only")
+	h.run(t)
+	first := h.load(t)
+	h.createInvoice(t)
+	h.run(t)
+	second := h.load(t)
+	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
+	o := h.credit("unused", 10000)
+	o.ExternalInvoiceID = first.ExternalInvoiceID
+	o.Reference = second.Reference
+	postInvoiceNotification(t, router, notificationPayload(t, o, "conflict", "conflicting-credit", "webhook"), http.StatusOK)
+	h.run(t)
+	if h.count(t, "SELECT count(*) FROM invoice_inbox WHERE state='review' AND error_code='ambiguous_reference'") != 1 || h.count(t, "SELECT count(*) FROM invoice_evidence") != 0 || h.count(t, "SELECT count(*) FROM invoice_payments WHERE credited_minor<>0") != 0 {
+		t.Fatal("conflicting external ID/reference paid an invoice or was not retained for review")
+	}
+}
+
+func TestFunctionalInvoiceWebhookMultipleReferencesRequireReview(t *testing.T) {
+	h := newHarness(t, "bank_credits", "recover_only")
+	h.run(t)
+	first := h.load(t)
+	h.createInvoice(t)
+	h.run(t)
+	second := h.load(t)
+	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
+	o := h.credit("unused", 10000)
+	o.Reference = first.Reference + " " + second.Reference
+	body := notificationPayload(t, o, "two-references", "ambiguous-credit", "webhook")
+	callbacksBefore := h.count(t, "SELECT count(*) FROM outbox_events WHERE event_type='payment.invoice.updated'")
+	postInvoiceNotification(t, router, body, http.StatusOK)
+	postInvoiceNotification(t, router, body, http.StatusOK)
+	if h.count(t, "SELECT count(*) FROM invoice_inbox") != 1 || h.count(t, "SELECT count(*) FROM invoice_commands WHERE command_type='invoice.apply_notification'") != 1 {
+		t.Fatal("replayed ambiguous notification created duplicate inbox or command")
+	}
+	h.run(t)
+	var normalizedReferencesJSON []byte
+	var inboxState, inboxError, commandStatus string
+	must(t, h.pool.QueryRow(t.Context(), `SELECT normalized_payload->'references', state, error_code FROM invoice_inbox`).Scan(&normalizedReferencesJSON, &inboxState, &inboxError))
+	var normalizedReferences []string
+	must(t, json.Unmarshal(normalizedReferencesJSON, &normalizedReferences))
+	must(t, h.pool.QueryRow(t.Context(), `SELECT status FROM invoice_commands WHERE command_type='invoice.apply_notification'`).Scan(&commandStatus))
+	var firstRevision, secondRevision int64
+	must(t, h.pool.QueryRow(t.Context(), `SELECT revision FROM invoice_payments WHERE payment_id=$1`, first.PaymentID).Scan(&firstRevision))
+	must(t, h.pool.QueryRow(t.Context(), `SELECT revision FROM invoice_payments WHERE payment_id=$1`, second.PaymentID).Scan(&secondRevision))
+	if len(normalizedReferences) != 2 || normalizedReferences[0] != first.Reference || normalizedReferences[1] != second.Reference || inboxState != "review" || inboxError != "ambiguous_reference" || commandStatus != "completed" || firstRevision != first.Revision || secondRevision != second.Revision || h.count(t, "SELECT count(*) FROM invoice_evidence") != 0 || h.count(t, "SELECT count(*) FROM invoice_payments WHERE credited_minor<>0") != 0 || h.count(t, "SELECT count(*) FROM outbox_events WHERE event_type='payment.invoice.updated'") != callbacksBefore {
+		t.Fatal("multiple references were not retained for review or credited an invoice")
+	}
+}
+
+func TestFunctionalInvoiceEarlyHookReappliedAfterBindingAndRestart(t *testing.T) {
+	h := newHarness(t, "bank_credits", "recover_only")
+	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
+	o := h.credit("unused", 10000)
+	o.Reference = ""
+	o.ExternalInvoiceID = "mock_invoice_" + h.record.PaymentID.String()
+	_, err := h.pool.Exec(t.Context(), `UPDATE invoice_commands SET next_attempt_at=$1 WHERE command_type='invoice.issue'`, h.now.Add(time.Hour))
+	must(t, err)
+	postInvoiceNotification(t, router, notificationPayload(t, o, "early-hook", "early-operation", "webhook"), http.StatusOK)
+	h.run(t)
+	if h.count(t, "SELECT count(*) FROM invoice_inbox WHERE state='unmatched'") != 1 || h.count(t, "SELECT count(*) FROM invoice_commands WHERE command_type='invoice.apply_notification' AND status='completed'") != 1 || h.load(t).CreditedMinor != 0 {
+		t.Fatal("early hook did not finish its first apply as unmatched without money")
+	}
+	_, err = h.pool.Exec(t.Context(), `UPDATE invoice_commands SET next_attempt_at=$1 WHERE command_type='invoice.issue'`, h.now)
+	must(t, err)
+	h.run(t)
+	if h.load(t).ExternalInvoiceID != o.ExternalInvoiceID || h.count(t, "SELECT count(*) FROM invoice_commands WHERE command_type='invoice.apply_notification' AND status='pending'") != 1 || h.load(t).CreditedMinor != 0 {
+		t.Fatal("binding did not create an independent active apply")
+	}
+	h.worker, err = service.NewWorker(h.tx, h.registry, func() time.Time { return h.now }, service.WorkerConfig{PollInterval: time.Second, BatchSize: 20, MaxAttempts: 3}, nil)
+	must(t, err)
+	h.run(t)
+	if h.load(t).CreditedMinor != 10000 || h.count(t, "SELECT count(*) FROM invoice_evidence") != 1 || h.count(t, "SELECT count(*) FROM invoice_inbox WHERE state='processed'") != 1 {
+		t.Fatal("worker restart lost or duplicated early hook")
+	}
+	h.assertStatus(t, "succeeded")
 }

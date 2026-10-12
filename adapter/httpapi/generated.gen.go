@@ -668,6 +668,13 @@ type CreateInvoicePaymentParams struct {
 	XSignature     XSignature            `json:"X-Signature"`
 }
 
+// GetInvoicePaymentParams defines parameters for GetInvoicePayment.
+type GetInvoicePaymentParams struct {
+	XAPIKey    XAPIKey    `json:"X-API-Key"`
+	XTimestamp XTimestamp `json:"X-Timestamp"`
+	XSignature XSignature `json:"X-Signature"`
+}
+
 // CreatePaymentParams defines parameters for CreatePayment.
 type CreatePaymentParams struct {
 	IdempotencyKey *IdempotencyKey `json:"Idempotency-Key,omitempty"`
@@ -784,6 +791,9 @@ type ServerInterface interface {
 	// Create a legal entity invoice payment intent
 	// (POST /invoice-payments)
 	CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams)
+	// Read a legal entity invoice payment projection
+	// (GET /invoice-payments/{payment_id})
+	GetInvoicePayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetInvoicePaymentParams)
 	// Create payment
 	// (POST /payments)
 	CreatePayment(w http.ResponseWriter, r *http.Request, params CreatePaymentParams)
@@ -811,6 +821,12 @@ func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
 // Create a legal entity invoice payment intent
 // (POST /invoice-payments)
 func (_ Unimplemented) CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Read a legal entity invoice payment projection
+// (GET /invoice-payments/{payment_id})
+func (_ Unimplemented) GetInvoicePayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetInvoicePaymentParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -966,6 +982,106 @@ func (siw *ServerInterfaceWrapper) CreateInvoicePayment(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateInvoicePayment(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetInvoicePayment operation middleware
+func (siw *ServerInterfaceWrapper) GetInvoicePayment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "payment_id" -------------
+	var paymentId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "payment_id", chi.URLParam(r, "payment_id"), &paymentId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "payment_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetInvoicePaymentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-API-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-API-Key")]; found {
+		var XAPIKey XAPIKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-API-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-API-Key", valueList[0], &XAPIKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-API-Key", Err: err})
+			return
+		}
+
+		params.XAPIKey = XAPIKey
+
+	} else {
+		err := fmt.Errorf("Header parameter X-API-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-API-Key", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Timestamp" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Timestamp")]; found {
+		var XTimestamp XTimestamp
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Timestamp", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Timestamp", valueList[0], &XTimestamp, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Timestamp", Err: err})
+			return
+		}
+
+		params.XTimestamp = XTimestamp
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Timestamp is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Timestamp", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Signature" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Signature")]; found {
+		var XSignature XSignature
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Signature", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Signature", valueList[0], &XSignature, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Signature", Err: err})
+			return
+		}
+
+		params.XSignature = XSignature
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Signature is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Signature", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetInvoicePayment(w, r, paymentId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1357,6 +1473,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/invoice-payments", wrapper.CreateInvoicePayment)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/invoice-payments/{payment_id}", wrapper.GetInvoicePayment)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/payments", wrapper.CreatePayment)
 	})
 	r.Group(func(r chi.Router) {
@@ -1515,6 +1634,71 @@ func (response CreateInvoicePayment422JSONResponse) VisitCreateInvoicePaymentRes
 type CreateInvoicePayment503JSONResponse ErrorResponse
 
 func (response CreateInvoicePayment503JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetInvoicePaymentRequestObject struct {
+	PaymentId openapi_types.UUID `json:"payment_id"`
+	Params    GetInvoicePaymentParams
+}
+
+type GetInvoicePaymentResponseObject interface {
+	VisitGetInvoicePaymentResponse(w http.ResponseWriter) error
+}
+
+type GetInvoicePayment200JSONResponse InvoicePaymentResponse
+
+func (response GetInvoicePayment200JSONResponse) VisitGetInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetInvoicePayment401JSONResponse struct{ ErrorJSONResponse }
+
+func (response GetInvoicePayment401JSONResponse) VisitGetInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetInvoicePayment404JSONResponse ErrorResponse
+
+func (response GetInvoicePayment404JSONResponse) VisitGetInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetInvoicePayment503JSONResponse ErrorResponse
+
+func (response GetInvoicePayment503JSONResponse) VisitGetInvoicePaymentResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1804,6 +1988,9 @@ type StrictServerInterface interface {
 	// Create a legal entity invoice payment intent
 	// (POST /invoice-payments)
 	CreateInvoicePayment(ctx context.Context, request CreateInvoicePaymentRequestObject) (CreateInvoicePaymentResponseObject, error)
+	// Read a legal entity invoice payment projection
+	// (GET /invoice-payments/{payment_id})
+	GetInvoicePayment(ctx context.Context, request GetInvoicePaymentRequestObject) (GetInvoicePaymentResponseObject, error)
 	// Create payment
 	// (POST /payments)
 	CreatePayment(ctx context.Context, request CreatePaymentRequestObject) (CreatePaymentResponseObject, error)
@@ -1897,6 +2084,33 @@ func (sh *strictHandler) CreateInvoicePayment(w http.ResponseWriter, r *http.Req
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateInvoicePaymentResponseObject); ok {
 		if err := validResponse.VisitCreateInvoicePaymentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetInvoicePayment operation middleware
+func (sh *strictHandler) GetInvoicePayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetInvoicePaymentParams) {
+	var request GetInvoicePaymentRequestObject
+
+	request.PaymentId = paymentId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetInvoicePayment(ctx, request.(GetInvoicePaymentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetInvoicePayment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetInvoicePaymentResponseObject); ok {
+		if err := validResponse.VisitGetInvoicePaymentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

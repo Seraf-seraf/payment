@@ -61,6 +61,7 @@ type Observation struct {
 	Kind                  string     `json:"kind"`
 	ExternalInvoiceID     string     `json:"external_invoice_id,omitempty"`
 	Reference             string     `json:"reference,omitempty"`
+	References            []string   `json:"references,omitempty"`
 	FinancialKey          string     `json:"financial_key,omitempty"`
 	EvidenceMode          string     `json:"evidence_mode,omitempty"`
 	AmountMinor           int64      `json:"amount_minor,omitempty"`
