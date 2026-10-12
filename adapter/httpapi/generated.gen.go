@@ -8,35 +8,247 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for BankTransferNextActionType.
+const (
+	BankTransfer BankTransferNextActionType = "bank_transfer"
+)
+
+// Valid indicates whether the value is a known member of the BankTransferNextActionType enum.
+func (e BankTransferNextActionType) Valid() bool {
+	switch e {
+	case BankTransfer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateInvoicePaymentRequestCurrency.
+const (
+	CreateInvoicePaymentRequestCurrencyRUB CreateInvoicePaymentRequestCurrency = "RUB"
+)
+
+// Valid indicates whether the value is a known member of the CreateInvoicePaymentRequestCurrency enum.
+func (e CreateInvoicePaymentRequestCurrency) Valid() bool {
+	switch e {
+	case CreateInvoicePaymentRequestCurrencyRUB:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoiceDocumentType.
+const (
+	Invoice InvoiceDocumentType = "invoice"
+)
+
+// Valid indicates whether the value is a known member of the InvoiceDocumentType enum.
+func (e InvoiceDocumentType) Valid() bool {
+	switch e {
+	case Invoice:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoiceLineUnit.
+const (
+	InvoiceLineUnitPiece   InvoiceLineUnit = "piece"
+	InvoiceLineUnitService InvoiceLineUnit = "service"
+	InvoiceLineUnitSet     InvoiceLineUnit = "set"
+)
+
+// Valid indicates whether the value is a known member of the InvoiceLineUnit enum.
+func (e InvoiceLineUnit) Valid() bool {
+	switch e {
+	case InvoiceLineUnitPiece:
+		return true
+	case InvoiceLineUnitService:
+		return true
+	case InvoiceLineUnitSet:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePayerKind.
+const (
+	Company InvoicePayerKind = "company"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePayerKind enum.
+func (e InvoicePayerKind) Valid() bool {
+	switch e {
+	case Company:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePaymentResponseCurrency.
+const (
+	InvoicePaymentResponseCurrencyRUB InvoicePaymentResponseCurrency = "RUB"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePaymentResponseCurrency enum.
+func (e InvoicePaymentResponseCurrency) Valid() bool {
+	switch e {
+	case InvoicePaymentResponseCurrencyRUB:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePaymentResponseFundingState.
+const (
+	InvoicePaymentResponseFundingStateNone     InvoicePaymentResponseFundingState = "none"
+	InvoicePaymentResponseFundingStateOverpaid InvoicePaymentResponseFundingState = "overpaid"
+	InvoicePaymentResponseFundingStatePaid     InvoicePaymentResponseFundingState = "paid"
+	InvoicePaymentResponseFundingStatePartial  InvoicePaymentResponseFundingState = "partial"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePaymentResponseFundingState enum.
+func (e InvoicePaymentResponseFundingState) Valid() bool {
+	switch e {
+	case InvoicePaymentResponseFundingStateNone:
+		return true
+	case InvoicePaymentResponseFundingStateOverpaid:
+		return true
+	case InvoicePaymentResponseFundingStatePaid:
+		return true
+	case InvoicePaymentResponseFundingStatePartial:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePaymentResponseIssuanceState.
+const (
+	Dispatched         InvoicePaymentResponseIssuanceState = "dispatched"
+	ExpiredBeforeIssue InvoicePaymentResponseIssuanceState = "expired_before_issue"
+	Issued             InvoicePaymentResponseIssuanceState = "issued"
+	Queued             InvoicePaymentResponseIssuanceState = "queued"
+	Rejected           InvoicePaymentResponseIssuanceState = "rejected"
+	Unknown            InvoicePaymentResponseIssuanceState = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePaymentResponseIssuanceState enum.
+func (e InvoicePaymentResponseIssuanceState) Valid() bool {
+	switch e {
+	case Dispatched:
+		return true
+	case ExpiredBeforeIssue:
+		return true
+	case Issued:
+		return true
+	case Queued:
+		return true
+	case Rejected:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePaymentResponsePaymentMethod.
+const (
+	LegalEntityInvoice InvoicePaymentResponsePaymentMethod = "legal_entity_invoice"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePaymentResponsePaymentMethod enum.
+func (e InvoicePaymentResponsePaymentMethod) Valid() bool {
+	switch e {
+	case LegalEntityInvoice:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoicePaymentResponseStatus.
+const (
+	InvoicePaymentResponseStatusCanceled  InvoicePaymentResponseStatus = "canceled"
+	InvoicePaymentResponseStatusCreating  InvoicePaymentResponseStatus = "creating"
+	InvoicePaymentResponseStatusFailed    InvoicePaymentResponseStatus = "failed"
+	InvoicePaymentResponseStatusPending   InvoicePaymentResponseStatus = "pending"
+	InvoicePaymentResponseStatusSucceeded InvoicePaymentResponseStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the InvoicePaymentResponseStatus enum.
+func (e InvoicePaymentResponseStatus) Valid() bool {
+	switch e {
+	case InvoicePaymentResponseStatusCanceled:
+		return true
+	case InvoicePaymentResponseStatusCreating:
+		return true
+	case InvoicePaymentResponseStatusFailed:
+		return true
+	case InvoicePaymentResponseStatusPending:
+		return true
+	case InvoicePaymentResponseStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for InvoiceVATKind.
+const (
+	InvoiceVATKindIncluded InvoiceVATKind = "included"
+	InvoiceVATKindNone     InvoiceVATKind = "none"
+)
+
+// Valid indicates whether the value is a known member of the InvoiceVATKind enum.
+func (e InvoiceVATKind) Valid() bool {
+	switch e {
+	case InvoiceVATKindIncluded:
+		return true
+	case InvoiceVATKindNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PaymentStatus.
 const (
-	Canceled  PaymentStatus = "canceled"
-	Failed    PaymentStatus = "failed"
-	Pending   PaymentStatus = "pending"
-	Refunded  PaymentStatus = "refunded"
-	Succeeded PaymentStatus = "succeeded"
+	PaymentStatusCanceled  PaymentStatus = "canceled"
+	PaymentStatusFailed    PaymentStatus = "failed"
+	PaymentStatusPending   PaymentStatus = "pending"
+	PaymentStatusRefunded  PaymentStatus = "refunded"
+	PaymentStatusSucceeded PaymentStatus = "succeeded"
 )
 
 // Valid indicates whether the value is a known member of the PaymentStatus enum.
 func (e PaymentStatus) Valid() bool {
 	switch e {
-	case Canceled:
+	case PaymentStatusCanceled:
 		return true
-	case Failed:
+	case PaymentStatusFailed:
 		return true
-	case Pending:
+	case PaymentStatusPending:
 		return true
-	case Refunded:
+	case PaymentStatusRefunded:
 		return true
-	case Succeeded:
+	case PaymentStatusSucceeded:
 		return true
 	default:
 		return false
@@ -78,49 +290,49 @@ func (e ReceiptPaymentMethod) Valid() bool {
 
 // Defines values for ReceiptPaymentObject.
 const (
-	AgentCommission      ReceiptPaymentObject = "agent_commission"
-	Another              ReceiptPaymentObject = "another"
-	Commodity            ReceiptPaymentObject = "commodity"
-	Composite            ReceiptPaymentObject = "composite"
-	Excise               ReceiptPaymentObject = "excise"
-	GamblingBet          ReceiptPaymentObject = "gambling_bet"
-	GamblingPrize        ReceiptPaymentObject = "gambling_prize"
-	IntellectualActivity ReceiptPaymentObject = "intellectual_activity"
-	Job                  ReceiptPaymentObject = "job"
-	Lottery              ReceiptPaymentObject = "lottery"
-	LotteryPrize         ReceiptPaymentObject = "lottery_prize"
-	Payment              ReceiptPaymentObject = "payment"
-	Service              ReceiptPaymentObject = "service"
+	ReceiptPaymentObjectAgentCommission      ReceiptPaymentObject = "agent_commission"
+	ReceiptPaymentObjectAnother              ReceiptPaymentObject = "another"
+	ReceiptPaymentObjectCommodity            ReceiptPaymentObject = "commodity"
+	ReceiptPaymentObjectComposite            ReceiptPaymentObject = "composite"
+	ReceiptPaymentObjectExcise               ReceiptPaymentObject = "excise"
+	ReceiptPaymentObjectGamblingBet          ReceiptPaymentObject = "gambling_bet"
+	ReceiptPaymentObjectGamblingPrize        ReceiptPaymentObject = "gambling_prize"
+	ReceiptPaymentObjectIntellectualActivity ReceiptPaymentObject = "intellectual_activity"
+	ReceiptPaymentObjectJob                  ReceiptPaymentObject = "job"
+	ReceiptPaymentObjectLottery              ReceiptPaymentObject = "lottery"
+	ReceiptPaymentObjectLotteryPrize         ReceiptPaymentObject = "lottery_prize"
+	ReceiptPaymentObjectPayment              ReceiptPaymentObject = "payment"
+	ReceiptPaymentObjectService              ReceiptPaymentObject = "service"
 )
 
 // Valid indicates whether the value is a known member of the ReceiptPaymentObject enum.
 func (e ReceiptPaymentObject) Valid() bool {
 	switch e {
-	case AgentCommission:
+	case ReceiptPaymentObjectAgentCommission:
 		return true
-	case Another:
+	case ReceiptPaymentObjectAnother:
 		return true
-	case Commodity:
+	case ReceiptPaymentObjectCommodity:
 		return true
-	case Composite:
+	case ReceiptPaymentObjectComposite:
 		return true
-	case Excise:
+	case ReceiptPaymentObjectExcise:
 		return true
-	case GamblingBet:
+	case ReceiptPaymentObjectGamblingBet:
 		return true
-	case GamblingPrize:
+	case ReceiptPaymentObjectGamblingPrize:
 		return true
-	case IntellectualActivity:
+	case ReceiptPaymentObjectIntellectualActivity:
 		return true
-	case Job:
+	case ReceiptPaymentObjectJob:
 		return true
-	case Lottery:
+	case ReceiptPaymentObjectLottery:
 		return true
-	case LotteryPrize:
+	case ReceiptPaymentObjectLotteryPrize:
 		return true
-	case Payment:
+	case ReceiptPaymentObjectPayment:
 		return true
-	case Service:
+	case ReceiptPaymentObjectService:
 		return true
 	default:
 		return false
@@ -196,6 +408,46 @@ func (e ReceiptTaxation) Valid() bool {
 	}
 }
 
+// Defines values for RedirectNextActionType.
+const (
+	Redirect RedirectNextActionType = "redirect"
+)
+
+// Valid indicates whether the value is a known member of the RedirectNextActionType enum.
+func (e RedirectNextActionType) Valid() bool {
+	switch e {
+	case Redirect:
+		return true
+	default:
+		return false
+	}
+}
+
+// BankTransferNextAction defines model for BankTransferNextAction.
+type BankTransferNextAction struct {
+	Beneficiary InvoiceBeneficiary         `json:"beneficiary"`
+	Purpose     string                     `json:"purpose"`
+	Type        BankTransferNextActionType `json:"type"`
+}
+
+// BankTransferNextActionType defines model for BankTransferNextAction.Type.
+type BankTransferNextActionType string
+
+// CreateInvoicePaymentRequest defines model for CreateInvoicePaymentRequest.
+type CreateInvoicePaymentRequest struct {
+	AcceptUntil time.Time                           `json:"accept_until"`
+	AmountMinor int64                               `json:"amount_minor"`
+	Currency    CreateInvoicePaymentRequestCurrency `json:"currency"`
+	Description string                              `json:"description"`
+	Lines       []InvoiceLine                       `json:"lines"`
+	OrderId     string                              `json:"order_id"`
+	Payer       InvoicePayer                        `json:"payer"`
+	RequestId   openapi_types.UUID                  `json:"request_id"`
+}
+
+// CreateInvoicePaymentRequestCurrency defines model for CreateInvoicePaymentRequest.Currency.
+type CreateInvoicePaymentRequestCurrency string
+
 // CreatePaymentRequest defines model for CreatePaymentRequest.
 type CreatePaymentRequest struct {
 	AmountMinor   int64     `json:"amount_minor"`
@@ -222,6 +474,114 @@ type ErrorResponse struct {
 type HealthResponse struct {
 	Status string `json:"status"`
 }
+
+// InvoiceArtifact defines model for InvoiceArtifact.
+type InvoiceArtifact struct {
+	Documents         []InvoiceDocument           `json:"documents"`
+	NextAction        *InvoiceArtifact_NextAction `json:"next_action"`
+	Number            string                      `json:"number"`
+	ProviderExpiresAt *time.Time                  `json:"provider_expires_at"`
+	Reference         string                      `json:"reference"`
+}
+
+// InvoiceArtifact_NextAction defines model for InvoiceArtifact.NextAction.
+type InvoiceArtifact_NextAction struct {
+	union json.RawMessage
+}
+
+// InvoiceBeneficiary defines model for InvoiceBeneficiary.
+type InvoiceBeneficiary struct {
+	Account              string `json:"account"`
+	BankBik              string `json:"bank_bik"`
+	BankName             string `json:"bank_name"`
+	CorrespondentAccount string `json:"correspondent_account"`
+	Inn                  string `json:"inn"`
+	Kpp                  string `json:"kpp"`
+	Name                 string `json:"name"`
+}
+
+// InvoiceDocument defines model for InvoiceDocument.
+type InvoiceDocument struct {
+	Type       InvoiceDocumentType `json:"type"`
+	Url        string              `json:"url"`
+	ValidUntil *time.Time          `json:"valid_until"`
+}
+
+// InvoiceDocumentType defines model for InvoiceDocument.Type.
+type InvoiceDocumentType string
+
+// InvoiceLine defines model for InvoiceLine.
+type InvoiceLine struct {
+	AmountMinor    int64           `json:"amount_minor"`
+	Id             string          `json:"id"`
+	Name           string          `json:"name"`
+	Quantity       int64           `json:"quantity"`
+	Unit           InvoiceLineUnit `json:"unit"`
+	UnitPriceMinor int64           `json:"unit_price_minor"`
+	Vat            InvoiceVAT      `json:"vat"`
+}
+
+// InvoiceLineUnit defines model for InvoiceLine.Unit.
+type InvoiceLineUnit string
+
+// InvoicePayer defines model for InvoicePayer.
+type InvoicePayer struct {
+	Email        *openapi_types.Email `json:"email,omitempty"`
+	Inn          string               `json:"inn"`
+	Kind         InvoicePayerKind     `json:"kind"`
+	Kpp          string               `json:"kpp"`
+	LegalAddress string               `json:"legal_address"`
+	Name         string               `json:"name"`
+}
+
+// InvoicePayerKind defines model for InvoicePayer.Kind.
+type InvoicePayerKind string
+
+// InvoicePaymentResponse defines model for InvoicePaymentResponse.
+type InvoicePaymentResponse struct {
+	AcceptUntil            time.Time                           `json:"accept_until"`
+	AmountMinor            int64                               `json:"amount_minor"`
+	ConfirmationRecordedAt *time.Time                          `json:"confirmation_recorded_at"`
+	ConfirmedPaid          bool                                `json:"confirmed_paid"`
+	CreditedMinor          int64                               `json:"credited_minor"`
+	Currency               InvoicePaymentResponseCurrency      `json:"currency"`
+	FundingState           InvoicePaymentResponseFundingState  `json:"funding_state"`
+	Invoice                *InvoiceArtifact                    `json:"invoice"`
+	IssuanceState          InvoicePaymentResponseIssuanceState `json:"issuance_state"`
+	OrderId                string                              `json:"order_id"`
+	PaymentConfirmedAt     *time.Time                          `json:"payment_confirmed_at"`
+	PaymentId              openapi_types.UUID                  `json:"payment_id"`
+	PaymentMethod          InvoicePaymentResponsePaymentMethod `json:"payment_method"`
+	RequiresReview         bool                                `json:"requires_review"`
+	ReviewReasons          []string                            `json:"review_reasons"`
+	Revision               int64                               `json:"revision"`
+	Status                 InvoicePaymentResponseStatus        `json:"status"`
+}
+
+// InvoicePaymentResponseCurrency defines model for InvoicePaymentResponse.Currency.
+type InvoicePaymentResponseCurrency string
+
+// InvoicePaymentResponseFundingState defines model for InvoicePaymentResponse.FundingState.
+type InvoicePaymentResponseFundingState string
+
+// InvoicePaymentResponseIssuanceState defines model for InvoicePaymentResponse.IssuanceState.
+type InvoicePaymentResponseIssuanceState string
+
+// InvoicePaymentResponsePaymentMethod defines model for InvoicePaymentResponse.PaymentMethod.
+type InvoicePaymentResponsePaymentMethod string
+
+// InvoicePaymentResponseStatus defines model for InvoicePaymentResponse.Status.
+type InvoicePaymentResponseStatus string
+
+// InvoiceVAT defines model for InvoiceVAT.
+type InvoiceVAT struct {
+	AmountMinor     int64          `json:"amount_minor"`
+	Kind            InvoiceVATKind `json:"kind"`
+	RateBasisPoints *int32         `json:"rate_basis_points"`
+}
+
+// InvoiceVATKind defines model for InvoiceVAT.Kind.
+type InvoiceVATKind string
 
 // PaymentResponse defines model for PaymentResponse.
 type PaymentResponse struct {
@@ -267,6 +627,16 @@ type ReceiptTax string
 // ReceiptTaxation defines model for ReceiptTaxation.
 type ReceiptTaxation string
 
+// RedirectNextAction defines model for RedirectNextAction.
+type RedirectNextAction struct {
+	Type       RedirectNextActionType `json:"type"`
+	Url        string                 `json:"url"`
+	ValidUntil time.Time              `json:"valid_until"`
+}
+
+// RedirectNextActionType defines model for RedirectNextAction.Type.
+type RedirectNextActionType string
+
 // WebhookResponse defines model for WebhookResponse.
 type WebhookResponse struct {
 	Status string `json:"status"`
@@ -274,6 +644,9 @@ type WebhookResponse struct {
 
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
+
+// InvoiceIdempotencyKey defines model for InvoiceIdempotencyKey.
+type InvoiceIdempotencyKey = openapi_types.UUID
 
 // XAPIKey defines model for XAPIKey.
 type XAPIKey = string
@@ -286,6 +659,14 @@ type XTimestamp = string
 
 // Error defines model for Error.
 type Error = ErrorResponse
+
+// CreateInvoicePaymentParams defines parameters for CreateInvoicePayment.
+type CreateInvoicePaymentParams struct {
+	IdempotencyKey InvoiceIdempotencyKey `json:"Idempotency-Key"`
+	XAPIKey        XAPIKey               `json:"X-API-Key"`
+	XTimestamp     XTimestamp            `json:"X-Timestamp"`
+	XSignature     XSignature            `json:"X-Signature"`
+}
 
 // CreatePaymentParams defines parameters for CreatePayment.
 type CreatePaymentParams struct {
@@ -302,6 +683,12 @@ type GetPaymentParams struct {
 	XSignature XSignature `json:"X-Signature"`
 }
 
+// ProviderInvoiceWebhookJSONBody defines parameters for ProviderInvoiceWebhook.
+type ProviderInvoiceWebhookJSONBody map[string]interface{}
+
+// ProviderInvoiceWebhookTextBody defines parameters for ProviderInvoiceWebhook.
+type ProviderInvoiceWebhookTextBody = string
+
 // ProviderWebhookJSONBody defines parameters for ProviderWebhook.
 type ProviderWebhookJSONBody map[string]interface{}
 
@@ -309,8 +696,17 @@ type ProviderWebhookJSONBody map[string]interface{}
 type ProviderWebhookFormdataBody struct {
 }
 
+// CreateInvoicePaymentJSONRequestBody defines body for CreateInvoicePayment for application/json ContentType.
+type CreateInvoicePaymentJSONRequestBody = CreateInvoicePaymentRequest
+
 // CreatePaymentJSONRequestBody defines body for CreatePayment for application/json ContentType.
 type CreatePaymentJSONRequestBody = CreatePaymentRequest
+
+// ProviderInvoiceWebhookJSONRequestBody defines body for ProviderInvoiceWebhook for application/json ContentType.
+type ProviderInvoiceWebhookJSONRequestBody ProviderInvoiceWebhookJSONBody
+
+// ProviderInvoiceWebhookTextRequestBody defines body for ProviderInvoiceWebhook for text/plain ContentType.
+type ProviderInvoiceWebhookTextRequestBody = ProviderInvoiceWebhookTextBody
 
 // ProviderWebhookJSONRequestBody defines body for ProviderWebhook for application/json ContentType.
 type ProviderWebhookJSONRequestBody ProviderWebhookJSONBody
@@ -318,17 +714,85 @@ type ProviderWebhookJSONRequestBody ProviderWebhookJSONBody
 // ProviderWebhookFormdataRequestBody defines body for ProviderWebhook for application/x-www-form-urlencoded ContentType.
 type ProviderWebhookFormdataRequestBody ProviderWebhookFormdataBody
 
+// AsBankTransferNextAction returns the union data inside the InvoiceArtifact_NextAction as a BankTransferNextAction
+func (t InvoiceArtifact_NextAction) AsBankTransferNextAction() (BankTransferNextAction, error) {
+	var body BankTransferNextAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromBankTransferNextAction overwrites any union data inside the InvoiceArtifact_NextAction as the provided BankTransferNextAction
+func (t *InvoiceArtifact_NextAction) FromBankTransferNextAction(v BankTransferNextAction) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeBankTransferNextAction performs a merge with any union data inside the InvoiceArtifact_NextAction, using the provided BankTransferNextAction
+func (t *InvoiceArtifact_NextAction) MergeBankTransferNextAction(v BankTransferNextAction) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsRedirectNextAction returns the union data inside the InvoiceArtifact_NextAction as a RedirectNextAction
+func (t InvoiceArtifact_NextAction) AsRedirectNextAction() (RedirectNextAction, error) {
+	var body RedirectNextAction
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromRedirectNextAction overwrites any union data inside the InvoiceArtifact_NextAction as the provided RedirectNextAction
+func (t *InvoiceArtifact_NextAction) FromRedirectNextAction(v RedirectNextAction) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeRedirectNextAction performs a merge with any union data inside the InvoiceArtifact_NextAction, using the provided RedirectNextAction
+func (t *InvoiceArtifact_NextAction) MergeRedirectNextAction(v RedirectNextAction) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t InvoiceArtifact_NextAction) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *InvoiceArtifact_NextAction) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// Health check
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// Create a legal entity invoice payment intent
+	// (POST /invoice-payments)
+	CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams)
 	// Create payment
 	// (POST /payments)
 	CreatePayment(w http.ResponseWriter, r *http.Request, params CreatePaymentParams)
 	// Get payment
 	// (GET /payments/{payment_id})
 	GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetPaymentParams)
+	// Accept verified invoice provider notification
+	// (POST /provider-invoice-webhooks/{connection_id})
+	ProviderInvoiceWebhook(w http.ResponseWriter, r *http.Request, connectionId string)
 	// Provider webhook
 	// (POST /provider-webhooks/{provider_name})
 	ProviderWebhook(w http.ResponseWriter, r *http.Request, providerName string)
@@ -344,6 +808,12 @@ func (_ Unimplemented) GetHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// Create a legal entity invoice payment intent
+// (POST /invoice-payments)
+func (_ Unimplemented) CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // Create payment
 // (POST /payments)
 func (_ Unimplemented) CreatePayment(w http.ResponseWriter, r *http.Request, params CreatePaymentParams) {
@@ -353,6 +823,12 @@ func (_ Unimplemented) CreatePayment(w http.ResponseWriter, r *http.Request, par
 // Get payment
 // (GET /payments/{payment_id})
 func (_ Unimplemented) GetPayment(w http.ResponseWriter, r *http.Request, paymentId openapi_types.UUID, params GetPaymentParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Accept verified invoice provider notification
+// (POST /provider-invoice-webhooks/{connection_id})
+func (_ Unimplemented) ProviderInvoiceWebhook(w http.ResponseWriter, r *http.Request, connectionId string) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -376,6 +852,120 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateInvoicePayment operation middleware
+func (siw *ServerInterfaceWrapper) CreateInvoicePayment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateInvoicePaymentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey InvoiceIdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Idempotency-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: "uuid"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Idempotency-Key", Err: err})
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		err := fmt.Errorf("Header parameter Idempotency-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "Idempotency-Key", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-API-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-API-Key")]; found {
+		var XAPIKey XAPIKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-API-Key", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-API-Key", valueList[0], &XAPIKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-API-Key", Err: err})
+			return
+		}
+
+		params.XAPIKey = XAPIKey
+
+	} else {
+		err := fmt.Errorf("Header parameter X-API-Key is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-API-Key", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Timestamp" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Timestamp")]; found {
+		var XTimestamp XTimestamp
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Timestamp", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Timestamp", valueList[0], &XTimestamp, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Timestamp", Err: err})
+			return
+		}
+
+		params.XTimestamp = XTimestamp
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Timestamp is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Timestamp", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-Signature" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Signature")]; found {
+		var XSignature XSignature
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Signature", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Signature", valueList[0], &XSignature, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Signature", Err: err})
+			return
+		}
+
+		params.XSignature = XSignature
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Signature is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Signature", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateInvoicePayment(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -595,6 +1185,32 @@ func (siw *ServerInterfaceWrapper) GetPayment(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ProviderInvoiceWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ProviderInvoiceWebhook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", chi.URLParam(r, "connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "connection_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ProviderInvoiceWebhook(w, r, connectionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ProviderWebhook operation middleware
 func (siw *ServerInterfaceWrapper) ProviderWebhook(w http.ResponseWriter, r *http.Request) {
 
@@ -738,10 +1354,16 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Get(options.BaseURL+"/health", wrapper.GetHealth)
 	})
 	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/invoice-payments", wrapper.CreateInvoicePayment)
+	})
+	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/payments", wrapper.CreatePayment)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/payments/{payment_id}", wrapper.GetPayment)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/provider-invoice-webhooks/{connection_id}", wrapper.ProviderInvoiceWebhook)
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/provider-webhooks/{provider_name}", wrapper.ProviderWebhook)
@@ -769,6 +1391,137 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePaymentRequestObject struct {
+	Params CreateInvoicePaymentParams
+	Body   *CreateInvoicePaymentJSONRequestBody
+}
+
+type CreateInvoicePaymentResponseObject interface {
+	VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error
+}
+
+type CreateInvoicePayment200JSONResponse InvoicePaymentResponse
+
+func (response CreateInvoicePayment200JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment202ResponseHeaders struct {
+	Location *string
+}
+
+type CreateInvoicePayment202JSONResponse struct {
+	Body    InvoicePaymentResponse
+	Headers CreateInvoicePayment202ResponseHeaders
+}
+
+func (response CreateInvoicePayment202JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment400JSONResponse struct{ ErrorJSONResponse }
+
+func (response CreateInvoicePayment400JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment401JSONResponse ErrorResponse
+
+func (response CreateInvoicePayment401JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment409JSONResponse ErrorResponse
+
+func (response CreateInvoicePayment409JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment413JSONResponse ErrorResponse
+
+func (response CreateInvoicePayment413JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment422JSONResponse ErrorResponse
+
+func (response CreateInvoicePayment422JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateInvoicePayment503JSONResponse ErrorResponse
+
+func (response CreateInvoicePayment503JSONResponse) VisitCreateInvoicePaymentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -889,6 +1642,111 @@ func (response GetPayment404JSONResponse) VisitGetPaymentResponse(w http.Respons
 	return err
 }
 
+type ProviderInvoiceWebhookRequestObject struct {
+	ConnectionId string `json:"connection_id"`
+	JSONBody     *ProviderInvoiceWebhookJSONRequestBody
+	TextBody     *ProviderInvoiceWebhookTextRequestBody
+}
+
+type ProviderInvoiceWebhookResponseObject interface {
+	VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error
+}
+
+type ProviderInvoiceWebhook200JSONResponse map[string]interface{}
+
+func (response ProviderInvoiceWebhook200JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderInvoiceWebhook200TextResponse string
+
+func (response ProviderInvoiceWebhook200TextResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(200)
+
+	_, err := w.Write([]byte(response))
+	return err
+}
+
+type ProviderInvoiceWebhook400JSONResponse struct{ ErrorJSONResponse }
+
+func (response ProviderInvoiceWebhook400JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderInvoiceWebhook401JSONResponse ErrorResponse
+
+func (response ProviderInvoiceWebhook401JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderInvoiceWebhook404JSONResponse ErrorResponse
+
+func (response ProviderInvoiceWebhook404JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderInvoiceWebhook413JSONResponse ErrorResponse
+
+func (response ProviderInvoiceWebhook413JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderInvoiceWebhook503JSONResponse ErrorResponse
+
+func (response ProviderInvoiceWebhook503JSONResponse) VisitProviderInvoiceWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ProviderWebhookRequestObject struct {
 	ProviderName string `json:"provider_name"`
 	JSONBody     *ProviderWebhookJSONRequestBody
@@ -943,12 +1801,18 @@ type StrictServerInterface interface {
 	// Health check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// Create a legal entity invoice payment intent
+	// (POST /invoice-payments)
+	CreateInvoicePayment(ctx context.Context, request CreateInvoicePaymentRequestObject) (CreateInvoicePaymentResponseObject, error)
 	// Create payment
 	// (POST /payments)
 	CreatePayment(ctx context.Context, request CreatePaymentRequestObject) (CreatePaymentResponseObject, error)
 	// Get payment
 	// (GET /payments/{payment_id})
 	GetPayment(ctx context.Context, request GetPaymentRequestObject) (GetPaymentResponseObject, error)
+	// Accept verified invoice provider notification
+	// (POST /provider-invoice-webhooks/{connection_id})
+	ProviderInvoiceWebhook(ctx context.Context, request ProviderInvoiceWebhookRequestObject) (ProviderInvoiceWebhookResponseObject, error)
 	// Provider webhook
 	// (POST /provider-webhooks/{provider_name})
 	ProviderWebhook(ctx context.Context, request ProviderWebhookRequestObject) (ProviderWebhookResponseObject, error)
@@ -1000,6 +1864,39 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateInvoicePayment operation middleware
+func (sh *strictHandler) CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams) {
+	var request CreateInvoicePaymentRequestObject
+
+	request.Params = params
+
+	var body CreateInvoicePaymentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateInvoicePayment(ctx, request.(CreateInvoicePaymentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateInvoicePayment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateInvoicePaymentResponseObject); ok {
+		if err := validResponse.VisitCreateInvoicePaymentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1060,6 +1957,51 @@ func (sh *strictHandler) GetPayment(w http.ResponseWriter, r *http.Request, paym
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPaymentResponseObject); ok {
 		if err := validResponse.VisitGetPaymentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ProviderInvoiceWebhook operation middleware
+func (sh *strictHandler) ProviderInvoiceWebhook(w http.ResponseWriter, r *http.Request, connectionId string) {
+	var request ProviderInvoiceWebhookRequestObject
+
+	request.ConnectionId = connectionId
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+
+		var body ProviderInvoiceWebhookJSONRequestBody
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+		request.JSONBody = &body
+
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "text/plain") {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't read body: %w", err))
+			return
+		}
+		body := ProviderInvoiceWebhookTextRequestBody(data)
+		request.TextBody = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ProviderInvoiceWebhook(ctx, request.(ProviderInvoiceWebhookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ProviderInvoiceWebhook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ProviderInvoiceWebhookResponseObject); ok {
+		if err := validResponse.VisitProviderInvoiceWebhookResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

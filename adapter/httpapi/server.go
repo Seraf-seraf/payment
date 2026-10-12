@@ -8,25 +8,32 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
 
+	invoicedomain "github.com/Seraf-seraf/payment/domain/invoice"
 	merchantdomain "github.com/Seraf-seraf/payment/domain/merchant"
 	paymentdomain "github.com/Seraf-seraf/payment/domain/payment"
 	providerdomain "github.com/Seraf-seraf/payment/domain/provider"
 	"github.com/Seraf-seraf/payment/pkg/crypto"
 	"github.com/Seraf-seraf/payment/ports"
+	invoiceservice "github.com/Seraf-seraf/payment/service/invoice"
 	"github.com/google/uuid"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Server реализует HTTP handlers, сгенерированные из OpenAPI контракта.
 type Server struct {
-	logger      *slog.Logger
-	merchants   ports.MerchantAuthenticator
-	payments    ports.PaymentUseCase
-	webhooks    ports.WebhookHandler
-	hmacMaxSkew time.Duration
+	logger               *slog.Logger
+	merchants            ports.MerchantAuthenticator
+	payments             ports.PaymentUseCase
+	invoices             ports.InvoiceUseCase
+	webhooks             ports.WebhookHandler
+	hmacMaxSkew          time.Duration
+	invoiceNotifications ports.InvoiceNotificationUseCase
+	invoiceDecoders      ports.InvoiceNotificationDecoderRegistry
 }
 
 // NewServer создает HTTP server handlers с зависимостями бизнес-слоя.
@@ -34,15 +41,136 @@ func NewServer(
 	logger *slog.Logger,
 	merchants ports.MerchantAuthenticator,
 	payments ports.PaymentUseCase,
+	invoices ports.InvoiceUseCase,
 	webhooks ports.WebhookHandler,
 	hmacMaxSkew time.Duration,
+	invoiceWebhook ...InvoiceWebhookDependencies,
 ) *Server {
-	return &Server{
+	server := &Server{
 		logger:      logger,
 		merchants:   merchants,
 		payments:    payments,
+		invoices:    invoices,
 		webhooks:    webhooks,
 		hmacMaxSkew: hmacMaxSkew,
+	}
+	if len(invoiceWebhook) > 0 {
+		server.invoiceNotifications = invoiceWebhook[0].Notifications
+		server.invoiceDecoders = invoiceWebhook[0].Decoders
+	}
+	return server
+}
+
+func (s *Server) CreateInvoicePayment(w http.ResponseWriter, r *http.Request, params CreateInvoicePaymentParams) {
+	if r.TLS == nil && !remoteIsLoopback(r.RemoteAddr) {
+		writeError(w, http.StatusBadRequest, "TLS_REQUIRED", "Для удалённых запросов требуется TLS.")
+		return
+	}
+	rawBody, err := readBody(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Некорректное тело запроса.")
+		return
+	}
+	merchant, ok := s.authenticate(w, r.Context(), CreatePaymentParams{
+		XAPIKey: params.XAPIKey, XTimestamp: params.XTimestamp, XSignature: params.XSignature,
+	}, rawBody)
+	if !ok {
+		return
+	}
+
+	var body CreateInvoicePaymentJSONRequestBody
+	decoder := json.NewDecoder(bytes.NewReader(rawBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Некорректное тело запроса.")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Некорректное тело запроса.")
+		return
+	}
+	requestID := uuid.UUID(body.RequestId)
+	_, offset := body.AcceptUntil.Zone()
+	if requestID == uuid.Nil || uuid.UUID(params.IdempotencyKey) != requestID || offset != 0 {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Idempotency-Key должен совпадать с request_id.")
+		return
+	}
+	request := invoicedomain.Request{
+		RequestID: requestID, OrderID: body.OrderId, AmountMinor: body.AmountMinor,
+		Currency: string(body.Currency), Description: body.Description,
+		AcceptUntil: body.AcceptUntil,
+		Payer: invoicedomain.Payer{
+			Kind: string(body.Payer.Kind), Name: body.Payer.Name, INN: body.Payer.Inn,
+			KPP: body.Payer.Kpp, LegalAddress: body.Payer.LegalAddress,
+		},
+		Lines: make([]invoicedomain.Line, 0, len(body.Lines)),
+	}
+	if body.Payer.Email != nil {
+		request.Payer.Email = string(*body.Payer.Email)
+	}
+	for _, line := range body.Lines {
+		request.Lines = append(request.Lines, invoicedomain.Line{
+			ID: line.Id, Name: line.Name, Quantity: line.Quantity, Unit: string(line.Unit),
+			UnitPriceMinor: line.UnitPriceMinor, AmountMinor: line.AmountMinor,
+			VAT: invoicedomain.VAT{Kind: string(line.Vat.Kind), RateBasisPoints: line.Vat.RateBasisPoints, AmountMinor: line.Vat.AmountMinor},
+		})
+	}
+	if s.invoices == nil {
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Выставление счетов отключено.")
+		return
+	}
+	result, err := s.invoices.CreateInvoicePayment(r.Context(), request, merchant)
+	if err != nil {
+		s.writeInvoiceError(w, err, merchant.ID)
+		return
+	}
+	response := invoicePaymentResponse(result.Invoice)
+	if result.Created {
+		location := "/api/v1/invoice-payments/" + result.Invoice.PaymentID.String()
+		w.Header().Set("Location", location)
+		writeJSON(w, http.StatusAccepted, response)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func remoteIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func (s *Server) writeInvoiceError(w http.ResponseWriter, err error, merchantID uuid.UUID) {
+	switch {
+	case errors.Is(err, invoiceservice.ErrInvalidRequest):
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Некорректные данные счёта.")
+	case errors.Is(err, invoiceservice.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "request_id уже использован с другими данными.")
+	case errors.Is(err, invoiceservice.ErrUnsupportedTerms), errors.Is(err, invoiceservice.ErrConnectionUnavailable):
+		writeError(w, http.StatusUnprocessableEntity, "UNSUPPORTED_INVOICE_TERMS", "Счёт с указанными условиями не поддерживается.")
+	default:
+		s.logger.Error("create invoice payment failed", slog.Any("error", err), slog.String("merchant_id", merchantID.String()))
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "Сервис временно недоступен.")
+	}
+}
+
+func invoicePaymentResponse(record invoicedomain.Record) InvoicePaymentResponse {
+	return InvoicePaymentResponse{
+		PaymentId: openapi_types.UUID(record.PaymentID), OrderId: record.Request.OrderID,
+		PaymentMethod: LegalEntityInvoice,
+		Status:        InvoicePaymentResponseStatusCreating,
+		IssuanceState: Queued,
+		FundingState:  InvoicePaymentResponseFundingStateNone,
+		AmountMinor:   record.Request.AmountMinor, CreditedMinor: 0,
+		Currency: InvoicePaymentResponseCurrencyRUB, ConfirmedPaid: false,
+		RequiresReview: false, ReviewReasons: []string{}, Revision: 1,
+		AcceptUntil: record.Request.AcceptUntil.UTC(), Invoice: nil,
 	}
 }
 

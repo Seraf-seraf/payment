@@ -18,6 +18,7 @@ type Config struct {
 	Postgres  Postgres  `yaml:"postgres"`
 	Security  Security  `yaml:"security"`
 	Providers Providers `yaml:"providers"`
+	Invoices  Invoices  `yaml:"invoices"`
 	Outbox    Outbox    `yaml:"outbox"`
 	Callback  Callback  `yaml:"callback"`
 }
@@ -55,6 +56,51 @@ type Providers struct {
 	Default string       `yaml:"default"`
 	Mock    MockProvider `yaml:"mock"`
 	TBank   TBank        `yaml:"tbank"`
+}
+
+type Invoices struct {
+	Enabled                  bool                `yaml:"enabled"`
+	WorkerEnabled            bool                `yaml:"worker_enabled"`
+	PollInterval             time.Duration       `yaml:"poll_interval"`
+	CommandBatchSize         int                 `yaml:"command_batch_size"`
+	CommandLease             time.Duration       `yaml:"command_lease"`
+	ProviderTimeout          time.Duration       `yaml:"provider_timeout"`
+	MaxAttempts              int                 `yaml:"max_attempts"`
+	ReconcileInterval        time.Duration       `yaml:"reconcile_interval"`
+	ExpiredReconcileInterval time.Duration       `yaml:"expired_reconcile_interval"`
+	Connections              []InvoiceConnection `yaml:"connections"`
+}
+
+type InvoiceConnection struct {
+	ID                  string             `yaml:"id"`
+	MerchantID          string             `yaml:"merchant_id"`
+	ProviderKind        string             `yaml:"provider_kind"`
+	EvidenceMode        string             `yaml:"evidence_mode"`
+	CreationReplay      string             `yaml:"creation_replay"`
+	WebhookSecretEnv    string             `yaml:"webhook_secret_env"`
+	Beneficiary         InvoiceBeneficiary `yaml:"beneficiary"`
+	OperationIDStrategy string             `yaml:"operation_id_strategy"`
+	OperationAliases    map[string]string  `yaml:"operation_aliases"`
+}
+
+type InvoiceBeneficiary struct {
+	Name                 string `yaml:"name"`
+	INN                  string `yaml:"inn"`
+	KPP                  string `yaml:"kpp"`
+	Account              string `yaml:"account"`
+	BankBIK              string `yaml:"bank_bik"`
+	BankName             string `yaml:"bank_name"`
+	CorrespondentAccount string `yaml:"correspondent_account"`
+}
+
+func (c Invoices) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.PollInterval <= 0 || c.CommandBatchSize < 1 || c.CommandBatchSize > 100 || c.ProviderTimeout <= 0 || c.CommandLease <= c.ProviderTimeout || c.MaxAttempts < 1 || c.MaxAttempts > 100 || c.ReconcileInterval <= 0 || c.ExpiredReconcileInterval <= 0 {
+		return errors.New("invalid invoices worker configuration")
+	}
+	return nil
 }
 
 // MockProvider содержит настройки тестового провайдера.
@@ -105,6 +151,9 @@ func Load(path string) (Config, error) {
 	if cfg.App.Name == "" {
 		return Config{}, errors.New("app name is required")
 	}
+	if err := cfg.Invoices.Validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -149,6 +198,7 @@ func defaultConfig() Config {
 				APIURL:  "https://securepay.tinkoff.ru/v2",
 			},
 		},
+		Invoices: Invoices{Enabled: false, WorkerEnabled: true, PollInterval: 60 * time.Second, CommandBatchSize: 20, CommandLease: 60 * time.Second, ProviderTimeout: 10 * time.Second, MaxAttempts: 10, ReconcileInterval: 10 * time.Minute, ExpiredReconcileInterval: 24 * time.Hour},
 		Outbox: Outbox{
 			Enabled:      true,
 			PollInterval: time.Second,

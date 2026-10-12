@@ -28,8 +28,10 @@ func NewRouter(
 	logger *slog.Logger,
 	merchants ports.MerchantAuthenticator,
 	payments ports.PaymentUseCase,
+	invoices ports.InvoiceUseCase,
 	webhooks ports.WebhookHandler,
 	hmacMaxSkew time.Duration,
+	invoiceWebhook ...InvoiceWebhookDependencies,
 ) http.Handler {
 	r := chi.NewRouter()
 
@@ -48,8 +50,9 @@ func NewRouter(
 
 	spec := mustOpenAPISpec()
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(limitInvoiceBody)
 		api.Use(nethttpmiddleware.OapiRequestValidator(spec))
-		server := NewServer(logger, merchants, payments, webhooks, hmacMaxSkew)
+		server := NewServer(logger, merchants, payments, invoices, webhooks, hmacMaxSkew, invoiceWebhook...)
 		HandlerWithOptions(server, ChiServerOptions{
 			BaseRouter: api,
 			ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, _ error) {

@@ -38,6 +38,7 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 
 	merchantRepository := postgresstorage.NewMerchantRepository(pool, cfg.Security.EncryptionKey)
 	paymentRepository := postgresstorage.NewPaymentRepository(pool)
+	invoiceRepository := postgresstorage.NewInvoiceRepository(pool)
 	webhookRepository := postgresstorage.NewWebhookRepository(pool)
 	outboxRepository := postgresstorage.NewOutboxRepository(pool)
 	txManager := postgresstorage.NewTransactionManager(pool, cfg.Security.EncryptionKey)
@@ -45,10 +46,12 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	if err != nil {
 		return nil, err
 	}
+
 	merchantService := merchantservice.NewService(merchantRepository)
 	paymentService := paymentservice.NewService(paymentRepository, providers, func() time.Time {
 		return time.Now().UTC()
 	})
+
 	webhookService := webhookservice.NewService(providers, paymentRepository, webhookRepository, outboxRepository, txManager)
 
 	var server *http.Server
@@ -60,8 +63,13 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 		return nil, errors.New("app mode must be api, worker or all")
 	}
 
+	invoices, err := buildInvoices(ctx, cfg, mode, merchantRepository, invoiceRepository, txManager, func() time.Time { return time.Now().UTC() }, log)
+	if err != nil {
+		return nil, err
+	}
+
 	if mode == "api" || mode == "all" {
-		router := httpapi.NewRouter(log, merchantService, paymentService, webhookService, cfg.Security.HMACMaxSkew)
+		router := httpapi.NewRouter(log, merchantService, paymentService, invoices.service, webhookService, cfg.Security.HMACMaxSkew, httpapi.InvoiceWebhookDependencies{Notifications: invoices.notifications, Decoders: invoices.registry})
 		server = &http.Server{
 			Addr:              cfg.HTTP.Addr,
 			Handler:           router,
@@ -73,6 +81,10 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 				log.Error("http server failed", slog.Any("error", err))
 			}
 		}()
+	}
+
+	if invoices.worker != nil {
+		invoices.worker.Start(ctx)
 	}
 
 	var worker ports.OutboxWorker
@@ -92,14 +104,22 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 
 	return func(shutdownCtx context.Context) error {
 		var shutdownErr error
+		invoiceStopped := true
+		if invoices.worker != nil {
+			err := invoices.worker.Stop(shutdownCtx)
+			invoiceStopped = err == nil
+			shutdownErr = errors.Join(shutdownErr, err)
+		}
 		if worker != nil {
 			shutdownErr = errors.Join(shutdownErr, worker.Stop(shutdownCtx))
 		}
 		if server != nil {
 			shutdownErr = errors.Join(shutdownErr, server.Shutdown(shutdownCtx))
 		}
-		for _, close := range closers {
-			close()
+		if invoiceStopped {
+			for _, close := range closers {
+				close()
+			}
 		}
 		return shutdownErr
 	}, nil

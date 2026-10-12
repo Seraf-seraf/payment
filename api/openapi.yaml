@@ -48,6 +48,50 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+  /invoice-payments:
+    post:
+      operationId: createInvoicePayment
+      summary: Create a legal entity invoice payment intent
+      parameters:
+        - $ref: '#/components/parameters/InvoiceIdempotencyKey'
+        - $ref: '#/components/parameters/XAPIKey'
+        - $ref: '#/components/parameters/XTimestamp'
+        - $ref: '#/components/parameters/XSignature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInvoicePaymentRequest'
+      responses:
+        '202':
+          description: Invoice intent accepted
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicePaymentResponse'
+        '200':
+          description: Existing idempotent invoice intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoicePaymentResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /payments/{payment_id}:
     get:
       operationId: getPayment
@@ -72,6 +116,47 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '401':
+          $ref: '#/components/responses/Error'
+  /provider-invoice-webhooks/{connection_id}:
+    post:
+      operationId: providerInvoiceWebhook
+      summary: Accept verified invoice provider notification
+      parameters:
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Durable acceptance using the configured decoder acknowledgement
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
   /provider-webhooks/{provider_name}:
     post:
@@ -109,6 +194,13 @@ paths:
           $ref: '#/components/responses/Error'
 components:
   parameters:
+    InvoiceIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -172,6 +264,261 @@ components:
           $ref: '#/components/schemas/Customer'
         receipt:
           $ref: '#/components/schemas/Receipt'
+    CreateInvoicePaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, order_id, amount_minor, currency, description, accept_until, payer, lines]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        currency:
+          type: string
+          enum: [RUB]
+        description:
+          type: string
+          minLength: 1
+          maxLength: 512
+        accept_until:
+          type: string
+          format: date-time
+        payer:
+          $ref: '#/components/schemas/InvoicePayer'
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/InvoiceLine'
+    InvoicePayer:
+      type: object
+      additionalProperties: false
+      required: [kind, name, inn, kpp, legal_address]
+      properties:
+        kind:
+          type: string
+          enum: [company]
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        inn:
+          type: string
+          pattern: '^[0-9]{10}$'
+        kpp:
+          type: string
+          pattern: '^[0-9]{9}$'
+        legal_address:
+          type: string
+          minLength: 1
+          maxLength: 1000
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    InvoiceLine:
+      type: object
+      additionalProperties: false
+      required: [id, name, quantity, unit, unit_price_minor, amount_minor, vat]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        quantity:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+        unit:
+          type: string
+          enum: [piece, set, service]
+        unit_price_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+        vat:
+          $ref: '#/components/schemas/InvoiceVAT'
+    InvoiceVAT:
+      type: object
+      additionalProperties: false
+      required: [kind, rate_basis_points, amount_minor]
+      properties:
+        kind:
+          type: string
+          enum: [none, included]
+        rate_basis_points:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 10000
+          nullable: true
+        amount_minor:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740991
+    InvoicePaymentResponse:
+      type: object
+      required: [payment_id, order_id, payment_method, status, issuance_state, funding_state, amount_minor, credited_minor, currency, confirmed_paid, requires_review, review_reasons, revision, accept_until, payment_confirmed_at, confirmation_recorded_at, invoice]
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+        payment_method:
+          type: string
+          enum: [legal_entity_invoice]
+        status:
+          type: string
+          enum: [creating, pending, succeeded, failed, canceled]
+        issuance_state:
+          type: string
+          enum: [queued, dispatched, issued, unknown, rejected, expired_before_issue]
+        funding_state:
+          type: string
+          enum: [none, partial, paid, overpaid]
+        amount_minor:
+          type: integer
+          format: int64
+        credited_minor:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          enum: [RUB]
+        confirmed_paid:
+          type: boolean
+        requires_review:
+          type: boolean
+        review_reasons:
+          type: array
+          items:
+            type: string
+        revision:
+          type: integer
+          format: int64
+        accept_until:
+          type: string
+          format: date-time
+        payment_confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        confirmation_recorded_at:
+          type: string
+          format: date-time
+          nullable: true
+        invoice:
+          $ref: '#/components/schemas/InvoiceArtifact'
+    InvoiceArtifact:
+      type: object
+      nullable: true
+      required: [number, reference, provider_expires_at, next_action, documents]
+      properties:
+        number:
+          type: string
+        reference:
+          type: string
+          pattern: '^INV-[0-9A-F]{32}$'
+        provider_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_action:
+          oneOf:
+            - $ref: '#/components/schemas/BankTransferNextAction'
+            - $ref: '#/components/schemas/RedirectNextAction'
+          nullable: true
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/InvoiceDocument'
+    InvoiceDocument:
+      type: object
+      additionalProperties: false
+      required: [type, url, valid_until]
+      properties:
+        type:
+          type: string
+          enum: [invoice]
+        url:
+          type: string
+          format: uri
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+    BankTransferNextAction:
+      type: object
+      additionalProperties: false
+      required: [type, purpose, beneficiary]
+      properties:
+        type:
+          type: string
+          enum: [bank_transfer]
+        purpose:
+          type: string
+        beneficiary:
+          $ref: '#/components/schemas/InvoiceBeneficiary'
+    RedirectNextAction:
+      type: object
+      additionalProperties: false
+      required: [type, url, valid_until]
+      properties:
+        type:
+          type: string
+          enum: [redirect]
+        url:
+          type: string
+          format: uri
+        valid_until:
+          type: string
+          format: date-time
+    InvoiceBeneficiary:
+      type: object
+      additionalProperties: false
+      required: [name, inn, kpp, account, bank_bik, bank_name, correspondent_account]
+      properties:
+        name:
+          type: string
+        inn:
+          type: string
+          pattern: '^[0-9]{10}$'
+        kpp:
+          type: string
+          pattern: '^[0-9]{9}$'
+        account:
+          type: string
+          pattern: '^[0-9]{20}$'
+        bank_bik:
+          type: string
+          pattern: '^[0-9]{9}$'
+        bank_name:
+          type: string
+        correspondent_account:
+          type: string
+          pattern: '^[0-9]{20}$'
     Customer:
       type: object
       properties:
