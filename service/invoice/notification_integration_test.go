@@ -1,3 +1,5 @@
+//go:build functional
+
 package invoice_test
 
 import (
@@ -85,7 +87,7 @@ func (h *harness) count(t *testing.T, query string) int {
 	return count
 }
 
-func TestInvoiceWebhookDurableAcceptanceAndFinancialTransportDedup(t *testing.T) {
+func TestFunctionalInvoiceWebhookDurableAcceptanceAndFinancialTransportDedup(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
@@ -120,7 +122,7 @@ func TestInvoiceWebhookDurableAcceptanceAndFinancialTransportDedup(t *testing.T)
 	}
 }
 
-func TestInvoiceWebhookDifferentStatementIDsRequireCanonicalProof(t *testing.T) {
+func TestFunctionalInvoiceWebhookDifferentStatementIDsRequireCanonicalProof(t *testing.T) {
 	for _, mapped := range []bool{true, false} {
 		t.Run(map[bool]string{true: "proven aliases", false: "no proof"}[mapped], func(t *testing.T) {
 			h := newHarness(t, "bank_credits", "recover_only")
@@ -157,7 +159,7 @@ func TestInvoiceWebhookDifferentStatementIDsRequireCanonicalProof(t *testing.T) 
 	}
 }
 
-func TestInvoiceWebhookStatusHintSchedulesReconcileOnlyAfterBinding(t *testing.T) {
+func TestFunctionalInvoiceWebhookStatusHintSchedulesReconcileOnlyAfterBinding(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
 	_, err := h.pool.Exec(t.Context(), "UPDATE invoice_commands SET next_attempt_at=$1 WHERE command_type='invoice.issue'", h.now.Add(time.Hour))
@@ -208,7 +210,7 @@ func (f failApplyCreationCommands) Create(ctx context.Context, c ports.InvoiceCo
 	}
 	return f.InvoiceCommandRepository.Create(ctx, c)
 }
-func TestInvoiceWebhookAcceptanceFailureRollsBackInboxBeforeACK(t *testing.T) {
+func TestFunctionalInvoiceWebhookAcceptanceFailureRollsBackInboxBeforeACK(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	router, _ := h.notificationRouter(t, "shared_operation_id", nil, failApplyCreationTx{h.tx})
@@ -218,7 +220,7 @@ func TestInvoiceWebhookAcceptanceFailureRollsBackInboxBeforeACK(t *testing.T) {
 	}
 }
 
-func TestInvoiceWebhookMismatchOverpaidAndLateFactsAreRetained(t *testing.T) {
+func TestFunctionalInvoiceWebhookMismatchOverpaidAndLateFactsAreRetained(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)
@@ -256,7 +258,7 @@ func TestInvoiceWebhookMismatchOverpaidAndLateFactsAreRetained(t *testing.T) {
 	}
 }
 
-func TestInvoiceWebhookPaymentAfterFailureIsNotDiscarded(t *testing.T) {
+func TestFunctionalInvoiceWebhookPaymentAfterFailureIsNotDiscarded(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	router, _ := h.notificationRouter(t, "shared_operation_id", nil, nil)

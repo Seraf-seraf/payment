@@ -1,3 +1,5 @@
+//go:build functional
+
 package invoice_test
 
 import (
@@ -9,6 +11,7 @@ import (
 	d "github.com/Seraf-seraf/payment/domain/invoice"
 	merchant "github.com/Seraf-seraf/payment/domain/merchant"
 	outbox "github.com/Seraf-seraf/payment/domain/outbox"
+	"github.com/Seraf-seraf/payment/pkg/config"
 	"github.com/Seraf-seraf/payment/ports"
 	service "github.com/Seraf-seraf/payment/service/invoice"
 	"github.com/google/uuid"
@@ -16,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -76,36 +80,48 @@ type harness struct {
 
 func newHarness(t *testing.T, mode, replay string) *harness {
 	t.Helper()
-	dsn := os.Getenv("TEST_INVOICE_DSN")
-	if dsn == "" {
-		t.Skip("TEST_INVOICE_DSN requires isolated PostgreSQL")
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = filepath.Join("..", "..", config.DefaultPath)
 	}
+	appConfig, err := config.Load(configPath)
+	must(t, err)
+	if appConfig.App.Env != "local" && appConfig.App.Env != "test" {
+		t.Fatal("functional tests require app.env local or test in CONFIG_PATH")
+	}
+	dsn := appConfig.Postgres.DSN
 	ctx := t.Context()
 	root, err := pgxpool.New(ctx, dsn)
 	must(t, err)
+	t.Cleanup(root.Close)
 	schema := "invoice_test_" + uuid.New().String()
 	schema = "\"" + schema + "\""
 	_, err = root.Exec(ctx, "CREATE SCHEMA "+schema)
 	must(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := root.Exec(cleanupCtx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+	})
 	cfg, err := pgxpool.ParseConfig(dsn)
 	must(t, err)
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	must(t, err)
+	t.Cleanup(pool.Close)
 	sqlDB := stdlib.OpenDB(*cfg.ConnConfig)
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, os.DirFS("../../migrations"))
 	must(t, err)
 	_, err = provider.Up(ctx)
 	must(t, err)
 	must(t, sqlDB.Close())
-	t.Cleanup(func() {
-		pool.Close()
-		_, err := root.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-		if err != nil {
-			t.Error(err)
-		}
-		root.Close()
-	})
 	h := &harness{pool: pool, tx: pg.NewTransactionManager(pool, ""), now: time.Date(2026, 10, 12, 6, 0, 0, 0, time.UTC)}
 	id := uuid.New()
 	_, err = pool.Exec(ctx, `INSERT INTO merchants(id,name,api_key_hash,shared_secret_encrypted,callback_url,provider_name) VALUES($1,'test',$2,'test','https://merchant.example/callback','mock')`, id, uuid.NewString())
@@ -164,7 +180,7 @@ func (h *harness) assertStatus(t *testing.T, want string) {
 	}
 }
 
-func TestInvoiceWorkerDispatchRecoverAndNeverBlindlyReissue(t *testing.T) {
+func TestFunctionalInvoiceWorkerDispatchRecoverAndNeverBlindlyReissue(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	stub := h.registry.provider.(*providerStub)
 	stub.issue = func(ctx context.Context, v d.Record) (d.IssueResult, error) {
@@ -196,7 +212,7 @@ func TestInvoiceWorkerDispatchRecoverAndNeverBlindlyReissue(t *testing.T) {
 	h.assertStatus(t, "pending")
 }
 
-func TestInvoiceCommandConcurrentClaimAndFencing(t *testing.T) {
+func TestFunctionalInvoiceCommandConcurrentClaimAndFencing(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	var all []ports.InvoiceCommand
 	var mu sync.Mutex
@@ -245,7 +261,7 @@ func TestInvoiceCommandConcurrentClaimAndFencing(t *testing.T) {
 	}))
 }
 
-func TestInvoiceWorkerFinancialDedupAndLateMoney(t *testing.T) {
+func TestFunctionalInvoiceWorkerFinancialDedupAndLateMoney(t *testing.T) {
 	h := newHarness(t, "bank_credits", "provider_idempotent")
 	h.run(t)
 	h.inbox(t, h.credit("operation-1", 4000))
@@ -280,7 +296,7 @@ func TestInvoiceWorkerFinancialDedupAndLateMoney(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerUnmatchedSurvivesBindingLostWakeup(t *testing.T) {
+func TestFunctionalInvoiceWorkerUnmatchedSurvivesBindingLostWakeup(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	o := h.credit("early-credit", 10000)
 	o.ExternalInvoiceID = "external-before-binding"
@@ -319,7 +335,7 @@ func TestInvoiceWorkerUnmatchedSurvivesBindingLostWakeup(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerReconciliationUsesSameFinancialKey(t *testing.T) {
+func TestFunctionalInvoiceWorkerReconciliationUsesSameFinancialKey(t *testing.T) {
 	h := newHarness(t, "bank_credits", "provider_idempotent")
 	h.run(t)
 	o := h.credit("readback-operation", 10000)
@@ -340,7 +356,7 @@ func TestInvoiceWorkerReconciliationUsesSameFinancialKey(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerExpiredBeforeIssueAndContextCancellation(t *testing.T) {
+func TestFunctionalInvoiceWorkerExpiredBeforeIssueAndContextCancellation(t *testing.T) {
 	h := newHarness(t, "bank_credits", "provider_idempotent")
 	h.now = h.record.Request.AcceptUntil
 	h.run(t)
@@ -381,7 +397,7 @@ func (f *failureOutbox) Create(ctx context.Context, event outbox.Event) error {
 	return f.OutboxRepository.Create(ctx, event)
 }
 
-func TestInvoiceWorkerLostSuccessfulReplyRecoversAndKeepsConfirmedMoney(t *testing.T) {
+func TestFunctionalInvoiceWorkerLostSuccessfulReplyRecoversAndKeepsConfirmedMoney(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	wrapper := &failOutboxTx{base: h.tx, fail: true}
 	var err error
@@ -408,7 +424,7 @@ func TestInvoiceWorkerLostSuccessfulReplyRecoversAndKeepsConfirmedMoney(t *testi
 	h.assertStatus(t, "succeeded")
 }
 
-func TestInvoiceWorkerProviderIdempotentReplayKeepsIdentity(t *testing.T) {
+func TestFunctionalInvoiceWorkerProviderIdempotentReplayKeepsIdentity(t *testing.T) {
 	h := newHarness(t, "bank_credits", "provider_idempotent")
 	stub := h.registry.provider.(*providerStub)
 	var first d.Record
@@ -430,7 +446,7 @@ func TestInvoiceWorkerProviderIdempotentReplayKeepsIdentity(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerBoundedInfrastructureRetryAndSafeTerminalCode(t *testing.T) {
+func TestFunctionalInvoiceWorkerBoundedInfrastructureRetryAndSafeTerminalCode(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	stub := h.registry.provider.(*providerStub)
@@ -460,7 +476,7 @@ func TestInvoiceWorkerBoundedInfrastructureRetryAndSafeTerminalCode(t *testing.T
 	}
 }
 
-func TestInvoiceWorkerConfirmationAndCurrencyMismatch(t *testing.T) {
+func TestFunctionalInvoiceWorkerConfirmationAndCurrencyMismatch(t *testing.T) {
 	h := newHarness(t, "invoice_confirmation", "provider_idempotent")
 	h.run(t)
 	externalID := h.load(t).ExternalInvoiceID
@@ -498,7 +514,7 @@ func TestInvoiceWorkerConfirmationAndCurrencyMismatch(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerCancellationDuringProviderCallLeavesRecoverableDispatch(t *testing.T) {
+func TestFunctionalInvoiceWorkerCancellationDuringProviderCallLeavesRecoverableDispatch(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	stub := h.registry.provider.(*providerStub)
 	started := make(chan struct{})
@@ -540,7 +556,7 @@ func TestInvoiceWorkerCancellationDuringProviderCallLeavesRecoverableDispatch(t 
 	}
 }
 
-func TestInvoiceWorkerStaleProviderReplyCannotOverwriteReclaimedResult(t *testing.T) {
+func TestFunctionalInvoiceWorkerStaleProviderReplyCannotOverwriteReclaimedResult(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	stub := h.registry.provider.(*providerStub)
 	started, release := make(chan struct{}), make(chan struct{})
@@ -582,7 +598,7 @@ func TestInvoiceWorkerStaleProviderReplyCannotOverwriteReclaimedResult(t *testin
 	}
 }
 
-func TestInvoiceWorkerIncompleteConfirmationDoesNotConsumeFinancialSlot(t *testing.T) {
+func TestFunctionalInvoiceWorkerIncompleteConfirmationDoesNotConsumeFinancialSlot(t *testing.T) {
 	h := newHarness(t, "invoice_confirmation", "provider_idempotent")
 	h.run(t)
 	invalid := h.credit("not-a-financial-confirmation", 10000)
@@ -608,7 +624,7 @@ func TestInvoiceWorkerIncompleteConfirmationDoesNotConsumeFinancialSlot(t *testi
 	h.assertStatus(t, "succeeded")
 }
 
-func TestInvoiceWorkerFinancialRollbackIsAtomicAndRetried(t *testing.T) {
+func TestFunctionalInvoiceWorkerFinancialRollbackIsAtomicAndRetried(t *testing.T) {
 	h := newHarness(t, "bank_credits", "recover_only")
 	h.run(t)
 	wrapper := &failOutboxTx{base: h.tx, fail: true}
@@ -635,7 +651,7 @@ func TestInvoiceWorkerFinancialRollbackIsAtomicAndRetried(t *testing.T) {
 	}
 }
 
-func TestInvoiceWorkerReceiverPayerAndOverpaymentReview(t *testing.T) {
+func TestFunctionalInvoiceWorkerReceiverPayerAndOverpaymentReview(t *testing.T) {
 	for _, field := range []string{"payer", "recipient"} {
 		t.Run(field, func(t *testing.T) {
 			h := newHarness(t, "bank_credits", "recover_only")
@@ -669,7 +685,7 @@ func TestInvoiceWorkerReceiverPayerAndOverpaymentReview(t *testing.T) {
 	h.assertStatus(t, "succeeded")
 }
 
-func TestInvoiceWorkerUsesConfiguredLeaseTimeoutAndReconcileIntervals(t *testing.T) {
+func TestFunctionalInvoiceWorkerUsesConfiguredLeaseTimeoutAndReconcileIntervals(t *testing.T) {
 	h := newHarness(t, "bank_credits", "provider_idempotent")
 	var err error
 	h.worker, err = service.NewWorker(h.tx, h.registry, func() time.Time { return h.now }, service.WorkerConfig{PollInterval: 2 * time.Second, BatchSize: 1, MaxAttempts: 3, CommandLease: 90 * time.Second, ProviderTimeout: 7 * time.Second, ReconcileInterval: 30 * time.Minute, ExpiredReconcileInterval: 48 * time.Hour}, nil)
