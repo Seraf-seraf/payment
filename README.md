@@ -6,7 +6,7 @@ HTTP-сервис для создания платежей, приема webhook
 
 - создание платежей с идемпотентностью;
 - аутентификация мерчантов по `X-API-Key` и HMAC-SHA256 подписи;
-- интеграция с mock-провайдером и T-Bank;
+- интеграция с mock-провайдером, T-Bank и CloudPayments;
 - прием и дедупликация provider webhook;
 - outbox worker для надежной доставки callback-событий;
 - OpenAPI-first HTTP API;
@@ -61,6 +61,8 @@ curl http://localhost:8080/metrics
 - `TBANK_TERMINAL_KEY`;
 - `TBANK_PASSWORD`;
 - `TBANK_NOTIFICATION_URL`;
+- `CLOUDPAYMENTS_PUBLIC_ID`;
+- `CLOUDPAYMENTS_API_SECRET`;
 - `SECURITY_ENCRYPTION_KEY`.
 
 `app.mode` (или env override `APP_MODE`) выбирает компоненты процесса:
@@ -76,6 +78,49 @@ Callback worker запускается при `outbox.enabled`; invoice worker �
 ```bash
 HTTP_ADDR=:8081 CONFIG_PATH=configs/config.yaml make run
 ```
+
+## CloudPayments
+
+Секция `providers.cloudpayments` содержит `enabled` (по умолчанию `false`),
+`api_url` (`https://api.cloudpayments.ru`), `public_id`, `api_secret`,
+`test_mode` (`true`) и `timeout` (`10s`). Непустые `CLOUDPAYMENTS_PUBLIC_ID`
+и `CLOUDPAYMENTS_API_SECRET` заменяют credentials из YAML; остальные параметры
+задаются в YAML. Секреты храните вне репозитория.
+
+Для выбора адаптера у соответствующего мерчанта используется существующее
+`Merchant.ProviderName = "cloudpayments"`. Включение адаптера не переключает
+мерчантов автоматически.
+
+| `payment_method` | Создание ссылки | Результат |
+| --- | --- | --- |
+| `card`, `bank_card`, пустое значение | `/orders/create` | Карточная платёжная страница |
+| `sbp` | `/payments/qr/sbp/link` | Прямая СБП-ссылка |
+
+Поддерживается RUB; сумма передаётся из целых копеек точно. Оба способа возвращают
+существующий `payment_url` со статусом `pending`; создание ссылки ещё не означает
+оплату. Страница может показывать другие способы, разрешённые терминалом.
+`InvoiceId` — внутренний UUID попытки платежа, а не номер заказа.
+
+Для одностадийного терминала ожидаются POST-уведомления **Pay и Fail** на
+`/api/v1/provider-webhooks/cloudpayments` в UTF-8 JSON или form-urlencoded.
+Check, Confirm, Refund, Cancel и Recurrent на этот endpoint не направляются.
+Проверяется `Content-HMAC` по исходным байтам; `X-Content-HMAC` не используется.
+`test_mode` должен совпадать с режимом терминала и уведомлений: для карточной
+страницы он не переключает терминал, а для СБП передаётся как `IsTest`.
+Это справка по ожидаемым настройкам, а не автоматическая настройка терминала.
+
+Pay со статусом Completed завершает оплату. Fail отдельной банковской попытки
+оставляет сессию `pending`, позволяя последующий Pay; поздний Fail не откатывает
+успех. Ответ `200 {"code":0}` выдаётся после обработки или идемпотентного повтора;
+доставка callback мерчанту остаётся асинхронной через outbox. При ошибке обработчик
+возвращает ненулевой code; OpenAPI middleware может отклонить запрос раньше со
+своим общим форматом ошибки. Если платёж ещё создаётся, уведомление не подтверждается.
+
+Существующий чек преобразуется в `CustomerReceipt` внутри запроса оплаты.
+Отдельная кассовая интеграция, реальные списания, возвраты, настройка терминала
+и согласование срока ссылки со сроком резерва в этот адаптер не входят.
+Локальные тесты используют HTTP-дубль и изолированный PostgreSQL: они не подтверждают
+работу подключённого терминала или выдачу фискального чека.
 
 ## Миграции
 

@@ -333,3 +333,48 @@ func TestCreateInvoicePaymentDisabledReturnsServiceUnavailable(t *testing.T) {
 		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+type cloudPaymentsWebhookFunc func(context.Context, string, http.Header, []byte) error
+
+func (f cloudPaymentsWebhookFunc) Handle(c context.Context, n string, h http.Header, b []byte) error {
+	return f(c, n, h, b)
+}
+
+func TestCloudPaymentsWebhookRouterAndLegacyResponses(t *testing.T) {
+	called := 0
+	next := cloudPaymentsWebhookFunc(func(_ context.Context, n string, _ http.Header, b []byte) error {
+		called++
+		if n == "cloudpayments" && !strings.Contains(string(b), `"raw_body"`) {
+			t.Error("missing envelope")
+		}
+		return nil
+	})
+	router := NewRouter(slog.Default(), nil, nil, nil, next, time.Minute)
+	for _, tc := range []struct {
+		provider string
+		want     string
+	}{{"cloudpayments", `{"code":0}`}, {"mock", `{"status":"ok"}`}, {"tbank", "OK"}} {
+		req := httptest.NewRequest("POST", "/api/v1/provider-webhooks/"+tc.provider, strings.NewReader(`{}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != tc.want {
+			t.Errorf("%s response=%d %s", tc.provider, rec.Code, rec.Body.String())
+		}
+	}
+	if called != 3 {
+		t.Fatalf("handler calls=%d", called)
+	}
+	for _, tc := range []struct{ method, ct, body string }{{"GET", "application/json", "{}"}, {"POST", "text/plain", "{}"}, {"POST", "application/json", "{"}} {
+		req := httptest.NewRequest(tc.method, "/api/v1/provider-webhooks/cloudpayments", strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", tc.ct)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code == 200 || strings.Contains(rec.Body.String(), `"code":0`) {
+			t.Errorf("invalid request acknowledged: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	if called != 3 {
+		t.Fatal("middleware rejection reached handler")
+	}
+}

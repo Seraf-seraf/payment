@@ -53,9 +53,19 @@ type Security struct {
 
 // Providers содержит настройки платежных провайдеров.
 type Providers struct {
-	Default string       `yaml:"default"`
-	Mock    MockProvider `yaml:"mock"`
-	TBank   TBank        `yaml:"tbank"`
+	CloudPayments CloudPayments `yaml:"cloudpayments"`
+	Default       string        `yaml:"default"`
+	Mock          MockProvider  `yaml:"mock"`
+	TBank         TBank         `yaml:"tbank"`
+}
+
+type CloudPayments struct {
+	Enabled   bool          `yaml:"enabled"`
+	APIURL    string        `yaml:"api_url"`
+	PublicID  string        `yaml:"public_id"`
+	APISecret string        `yaml:"api_secret"`
+	TestMode  bool          `yaml:"test_mode"`
+	Timeout   time.Duration `yaml:"timeout"`
 }
 
 type Invoices struct {
@@ -188,7 +198,8 @@ func defaultConfig() Config {
 			HMACMaxSkew: 5 * time.Minute,
 		},
 		Providers: Providers{
-			Default: "mock",
+			CloudPayments: CloudPayments{Enabled: false, APIURL: "https://api.cloudpayments.ru", TestMode: true, Timeout: 10 * time.Second},
+			Default:       "mock",
 			Mock: MockProvider{
 				Enabled:       true,
 				WebhookSecret: "mock-webhook-secret",
@@ -213,6 +224,12 @@ func defaultConfig() Config {
 }
 
 func applyEnv(cfg *Config) {
+	if value := os.Getenv("CLOUDPAYMENTS_PUBLIC_ID"); value != "" {
+		cfg.Providers.CloudPayments.PublicID = value
+	}
+	if value := os.Getenv("CLOUDPAYMENTS_API_SECRET"); value != "" {
+		cfg.Providers.CloudPayments.APISecret = value
+	}
 	if value := os.Getenv("APP_MODE"); value != "" {
 		cfg.App.Mode = value
 	}

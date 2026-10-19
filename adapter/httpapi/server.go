@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	cloudpaymentsprovider "github.com/Seraf-seraf/payment/adapter/provider/cloudpayments"
 	"io"
 	"log/slog"
 	"net"
@@ -401,6 +402,10 @@ func (s *Server) GetPayment(w http.ResponseWriter, r *http.Request, paymentID uu
 
 // ProviderWebhook принимает webhook от платежного провайдера.
 func (s *Server) ProviderWebhook(w http.ResponseWriter, r *http.Request, providerName string) {
+	if providerName == "cloudpayments" {
+		cloudpaymentsprovider.HandleWebhook(w, r, s.webhooks, s.logger)
+		return
+	}
 	rawBody, err := readBody(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса.")

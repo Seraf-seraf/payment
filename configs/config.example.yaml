@@ -19,6 +19,13 @@ security:
   encryption_key: ""
 
 providers:
+  cloudpayments:
+    enabled: false
+    api_url: "https://api.cloudpayments.ru"
+    public_id: ""
+    api_secret: ""
+    test_mode: true
+    timeout: "10s"
   default: mock
   mock:
     enabled: true

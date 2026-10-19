@@ -9,6 +9,7 @@ import (
 
 	"github.com/Seraf-seraf/payment/adapter/httpapi"
 	"github.com/Seraf-seraf/payment/adapter/notification/httpcallback"
+	cloudpaymentsprovider "github.com/Seraf-seraf/payment/adapter/provider/cloudpayments"
 	mockprovider "github.com/Seraf-seraf/payment/adapter/provider/mock"
 	tbankprovider "github.com/Seraf-seraf/payment/adapter/provider/tbank"
 	postgresstorage "github.com/Seraf-seraf/payment/adapter/storage/postgres"
@@ -42,7 +43,7 @@ func Run(ctx context.Context, cfg config.Config) (func(context.Context) error, e
 	webhookRepository := postgresstorage.NewWebhookRepository(pool)
 	outboxRepository := postgresstorage.NewOutboxRepository(pool)
 	txManager := postgresstorage.NewTransactionManager(pool, cfg.Security.EncryptionKey)
-	providers, err := buildProviderRegistry(cfg)
+	providers, err := buildProviderRegistry(cfg, paymentRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +140,7 @@ func shutdownRuntime(
 	return shutdownErr
 }
 
-func buildProviderRegistry(cfg config.Config) (*ProviderRegistry, error) {
+func buildProviderRegistry(cfg config.Config, payments ports.PaymentRepository) (*ProviderRegistry, error) {
 	providers := make([]ports.PaymentProvider, 0, 2)
 	if cfg.Providers.Mock.Enabled {
 		providers = append(providers, mockprovider.New(cfg.Providers.Mock.WebhookSecret))
@@ -151,6 +152,14 @@ func buildProviderRegistry(cfg config.Config) (*ProviderRegistry, error) {
 			Password:        cfg.Providers.TBank.Password,
 			NotificationURL: cfg.Providers.TBank.NotificationURL,
 		})
+		if err != nil {
+			return nil, err
+		}
+		providers = append(providers, provider)
+	}
+	if cfg.Providers.CloudPayments.Enabled {
+		p := cfg.Providers.CloudPayments
+		provider, err := cloudpaymentsprovider.New(cloudpaymentsprovider.Options{APIURL: p.APIURL, PublicID: p.PublicID, APISecret: p.APISecret, TestMode: p.TestMode, Timeout: p.Timeout, Payments: payments})
 		if err != nil {
 			return nil, err
 		}

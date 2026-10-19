@@ -189,6 +189,11 @@ paths:
     post:
       operationId: providerWebhook
       summary: Provider webhook
+      description: >-
+        CloudPayments (cloudpayments) accepts configured Pay/Fail notifications for
+        one-stage payments only. A successful acknowledgement follows processing;
+        merchant callback delivery remains asynchronous. OpenAPI middleware may
+        reject a request before HandleWebhook with its general error format.
       parameters:
         - name: provider_name
           in: path
@@ -208,7 +213,7 @@ paths:
               additionalProperties: true
       responses:
         '200':
-          description: Webhook accepted
+          description: Webhook accepted after processing, including idempotent replay
           content:
             text/plain:
               schema:
@@ -216,9 +221,48 @@ paths:
                 example: OK
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/WebhookResponse'
+                  - $ref: '#/components/schemas/CloudPaymentsWebhookResponse'
         '400':
-          $ref: '#/components/responses/Error'
+          description: Invalid notification; middleware errors may use the general format
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+        '401':
+          description: Invalid CloudPayments signature; describes HandleWebhook responses, middleware may reject earlier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+        '409':
+          description: Notification does not match the stored payment; describes HandleWebhook responses, middleware may reject earlier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+        '413':
+          description: CloudPayments webhook body exceeds the local limit; describes HandleWebhook responses, middleware may reject earlier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+        '415':
+          description: Unsupported webhook content type or charset; describes HandleWebhook responses, middleware may reject earlier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+        '503':
+          description: Payment not ready or processing failed; notification is not acknowledged; describes HandleWebhook responses, middleware may reject earlier
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudPaymentsWebhookErrorResponse'
+
 components:
   parameters:
     InvoiceIdempotencyKey:
@@ -631,6 +675,22 @@ components:
     PaymentStatus:
       type: string
       enum: [pending, succeeded, failed, canceled, refunded]
+    CloudPaymentsWebhookResponse:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          type: integer
+          enum: [0]
+    CloudPaymentsWebhookErrorResponse:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          type: integer
+          enum: [1]
     WebhookResponse:
       type: object
       required: [status]

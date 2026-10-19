@@ -33,6 +33,36 @@ func (e BankTransferNextActionType) Valid() bool {
 	}
 }
 
+// Defines values for CloudPaymentsWebhookErrorResponseCode.
+const (
+	N1 CloudPaymentsWebhookErrorResponseCode = 1
+)
+
+// Valid indicates whether the value is a known member of the CloudPaymentsWebhookErrorResponseCode enum.
+func (e CloudPaymentsWebhookErrorResponseCode) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CloudPaymentsWebhookResponseCode.
+const (
+	N0 CloudPaymentsWebhookResponseCode = 0
+)
+
+// Valid indicates whether the value is a known member of the CloudPaymentsWebhookResponseCode enum.
+func (e CloudPaymentsWebhookResponseCode) Valid() bool {
+	switch e {
+	case N0:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateInvoicePaymentRequestCurrency.
 const (
 	CreateInvoicePaymentRequestCurrencyRUB CreateInvoicePaymentRequestCurrency = "RUB"
@@ -433,6 +463,22 @@ type BankTransferNextAction struct {
 // BankTransferNextActionType defines model for BankTransferNextAction.Type.
 type BankTransferNextActionType string
 
+// CloudPaymentsWebhookErrorResponse defines model for CloudPaymentsWebhookErrorResponse.
+type CloudPaymentsWebhookErrorResponse struct {
+	Code CloudPaymentsWebhookErrorResponseCode `json:"code"`
+}
+
+// CloudPaymentsWebhookErrorResponseCode defines model for CloudPaymentsWebhookErrorResponse.Code.
+type CloudPaymentsWebhookErrorResponseCode int
+
+// CloudPaymentsWebhookResponse defines model for CloudPaymentsWebhookResponse.
+type CloudPaymentsWebhookResponse struct {
+	Code CloudPaymentsWebhookResponseCode `json:"code"`
+}
+
+// CloudPaymentsWebhookResponseCode defines model for CloudPaymentsWebhookResponse.Code.
+type CloudPaymentsWebhookResponseCode int
+
 // CreateInvoicePaymentRequest defines model for CreateInvoicePaymentRequest.
 type CreateInvoicePaymentRequest struct {
 	AcceptUntil time.Time                           `json:"accept_until"`
@@ -703,6 +749,16 @@ type ProviderWebhookJSONBody map[string]interface{}
 type ProviderWebhookFormdataBody struct {
 }
 
+// ProviderWebhook200JSONResponseBody defines parameters for ProviderWebhook.
+type ProviderWebhook200JSONResponseBody struct {
+	union json.RawMessage
+}
+
+// ProviderWebhook400JSONResponseBody defines parameters for ProviderWebhook.
+type ProviderWebhook400JSONResponseBody struct {
+	union json.RawMessage
+}
+
 // CreateInvoicePaymentJSONRequestBody defines body for CreateInvoicePayment for application/json ContentType.
 type CreateInvoicePaymentJSONRequestBody = CreateInvoicePaymentRequest
 
@@ -779,6 +835,130 @@ func (t InvoiceArtifact_NextAction) MarshalJSON() ([]byte, error) {
 }
 
 func (t *InvoiceArtifact_NextAction) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsWebhookResponse returns the union data inside the ProviderWebhook200JSONResponseBody as a WebhookResponse
+func (t ProviderWebhook200JSONResponseBody) AsWebhookResponse() (WebhookResponse, error) {
+	var body WebhookResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromWebhookResponse overwrites any union data inside the ProviderWebhook200JSONResponseBody as the provided WebhookResponse
+func (t *ProviderWebhook200JSONResponseBody) FromWebhookResponse(v WebhookResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeWebhookResponse performs a merge with any union data inside the ProviderWebhook200JSONResponseBody, using the provided WebhookResponse
+func (t *ProviderWebhook200JSONResponseBody) MergeWebhookResponse(v WebhookResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCloudPaymentsWebhookResponse returns the union data inside the ProviderWebhook200JSONResponseBody as a CloudPaymentsWebhookResponse
+func (t ProviderWebhook200JSONResponseBody) AsCloudPaymentsWebhookResponse() (CloudPaymentsWebhookResponse, error) {
+	var body CloudPaymentsWebhookResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCloudPaymentsWebhookResponse overwrites any union data inside the ProviderWebhook200JSONResponseBody as the provided CloudPaymentsWebhookResponse
+func (t *ProviderWebhook200JSONResponseBody) FromCloudPaymentsWebhookResponse(v CloudPaymentsWebhookResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCloudPaymentsWebhookResponse performs a merge with any union data inside the ProviderWebhook200JSONResponseBody, using the provided CloudPaymentsWebhookResponse
+func (t *ProviderWebhook200JSONResponseBody) MergeCloudPaymentsWebhookResponse(v CloudPaymentsWebhookResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProviderWebhook200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProviderWebhook200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsErrorResponse returns the union data inside the ProviderWebhook400JSONResponseBody as a ErrorResponse
+func (t ProviderWebhook400JSONResponseBody) AsErrorResponse() (ErrorResponse, error) {
+	var body ErrorResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromErrorResponse overwrites any union data inside the ProviderWebhook400JSONResponseBody as the provided ErrorResponse
+func (t *ProviderWebhook400JSONResponseBody) FromErrorResponse(v ErrorResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeErrorResponse performs a merge with any union data inside the ProviderWebhook400JSONResponseBody, using the provided ErrorResponse
+func (t *ProviderWebhook400JSONResponseBody) MergeErrorResponse(v ErrorResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsCloudPaymentsWebhookErrorResponse returns the union data inside the ProviderWebhook400JSONResponseBody as a CloudPaymentsWebhookErrorResponse
+func (t ProviderWebhook400JSONResponseBody) AsCloudPaymentsWebhookErrorResponse() (CloudPaymentsWebhookErrorResponse, error) {
+	var body CloudPaymentsWebhookErrorResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromCloudPaymentsWebhookErrorResponse overwrites any union data inside the ProviderWebhook400JSONResponseBody as the provided CloudPaymentsWebhookErrorResponse
+func (t *ProviderWebhook400JSONResponseBody) FromCloudPaymentsWebhookErrorResponse(v CloudPaymentsWebhookErrorResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeCloudPaymentsWebhookErrorResponse performs a merge with any union data inside the ProviderWebhook400JSONResponseBody, using the provided CloudPaymentsWebhookErrorResponse
+func (t *ProviderWebhook400JSONResponseBody) MergeCloudPaymentsWebhookErrorResponse(v CloudPaymentsWebhookErrorResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t ProviderWebhook400JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *ProviderWebhook400JSONResponseBody) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -1941,12 +2121,12 @@ type ProviderWebhookResponseObject interface {
 	VisitProviderWebhookResponse(w http.ResponseWriter) error
 }
 
-type ProviderWebhook200JSONResponse WebhookResponse
+type ProviderWebhook200JSONResponse = ProviderWebhook200JSONResponseBody
 
 func (response ProviderWebhook200JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.union); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1966,16 +2146,86 @@ func (response ProviderWebhook200TextResponse) VisitProviderWebhookResponse(w ht
 	return err
 }
 
-type ProviderWebhook400JSONResponse struct{ ErrorJSONResponse }
+type ProviderWebhook400JSONResponse = ProviderWebhook400JSONResponseBody
 
 func (response ProviderWebhook400JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.union); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderWebhook401JSONResponse CloudPaymentsWebhookErrorResponse
+
+func (response ProviderWebhook401JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderWebhook409JSONResponse CloudPaymentsWebhookErrorResponse
+
+func (response ProviderWebhook409JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderWebhook413JSONResponse CloudPaymentsWebhookErrorResponse
+
+func (response ProviderWebhook413JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderWebhook415JSONResponse CloudPaymentsWebhookErrorResponse
+
+func (response ProviderWebhook415JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ProviderWebhook503JSONResponse CloudPaymentsWebhookErrorResponse
+
+func (response ProviderWebhook503JSONResponse) VisitProviderWebhookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
